@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Karpathy makemore 第 3 集 · Activations & Gradients, BatchNorm — 学习笔记</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] }
+  };
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<style>
+  :root {
+    --bg: #fbfaf7;
+    --fg: #1f2328;
+    --muted: #57606a;
+    --accent: #0969da;
+    --accent2: #8250df;
+    --code-bg: #f6f8fa;
+    --code-fg: #24292f;
+    --border: #d0d7de;
+    --callout-bg: #fff8c5;
+    --callout-border: #d4a72c;
+    --infra-bg: #ddf4ff;
+    --infra-border: #54aeff;
+    --good-bg: #dafbe1;
+    --good-border: #4ac26b;
+    --qa-bg: #fbefff;
+    --qa-border: #a371f7;
+    --warn-bg: #ffebe9;
+    --warn-border: #cf222e;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    line-height: 1.78;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 44px 28px 96px;
+    font-size: 16px;
+  }
+  h1 {
+    font-size: 30px;
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 14px;
+    margin-bottom: 6px;
+    line-height: 1.35;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 14px;
+    margin-bottom: 8px;
+  }
+  .meta {
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 36px;
+  }
+  h2 {
+    font-size: 23px;
+    margin-top: 52px;
+    border-left: 4px solid var(--accent);
+    padding-left: 12px;
+  }
+  h3 {
+    font-size: 18px;
+    margin-top: 30px;
+    color: var(--accent2);
+  }
+  h4 {
+    font-size: 16px;
+    margin-top: 22px;
+    color: var(--fg);
+  }
+  p { margin: 14px 0; }
+  code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 14px;
+    color: #cf222e;
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-size: 13.5px;
+    line-height: 1.6;
+  }
+  pre code {
+    background: transparent;
+    padding: 0;
+    color: inherit;
+    font-size: 13.5px;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  blockquote {
+    border-left: 4px solid var(--border);
+    color: var(--muted);
+    padding: 4px 14px;
+    margin: 18px 0;
+    background: #fff;
+  }
+
+  .callout {
+    background: var(--callout-bg);
+    border-left: 4px solid var(--callout-border);
+    padding: 12px 16px;
+    margin: 18px 0;
+    border-radius: 4px;
+  }
+  .callout-title {
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .infra-callout {
+    background: var(--infra-bg);
+    border-left: 4px solid var(--infra-border);
+    padding: 14px 18px;
+    margin: 22px 0;
+    border-radius: 4px;
+  }
+  .infra-callout .callout-title {
+    color: #0a3069;
+  }
+
+  .good-callout {
+    background: var(--good-bg);
+    border-left: 4px solid var(--good-border);
+    padding: 12px 16px;
+    margin: 18px 0;
+    border-radius: 4px;
+  }
+
+  .warn-callout {
+    background: var(--warn-bg);
+    border-left: 4px solid var(--warn-border);
+    padding: 12px 16px;
+    margin: 18px 0;
+    border-radius: 4px;
+  }
+
+  .qa-callout {
+    background: var(--qa-bg);
+    border-left: 4px solid var(--qa-border);
+    padding: 14px 18px;
+    margin: 22px 0;
+    border-radius: 4px;
+  }
+  .qa-callout .qa-q {
+    font-weight: 600;
+    color: #6f42c1;
+    margin-bottom: 8px;
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 18px 0;
+    font-size: 14.5px;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: #f6f8fa;
+    font-weight: 600;
+  }
+
+  ul, ol { padding-left: 28px; }
+  li { margin: 6px 0; }
+
+  .toc {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 22px;
+    margin: 28px 0;
+    font-size: 14.5px;
+  }
+  .toc-title {
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: var(--muted);
+    font-size: 13px;
+    letter-spacing: 0.5px;
+  }
+  .toc ol { padding-left: 22px; margin: 6px 0; }
+
+  .tag {
+    display: inline-block;
+    background: #f6f8fa;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1px 10px;
+    font-size: 12px;
+    color: var(--muted);
+    margin-right: 6px;
+  }
+
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 40px 0;
+  }
+
+  .ascii {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    white-space: pre;
+    background: #fff;
+    border: 1px dashed var(--border);
+    padding: 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-x: auto;
+  }
+</style>
+</head>
+<body>
+
+<h1>Karpathy <code>makemore</code> 第 3 集 · Activations &amp; Gradients, BatchNorm</h1>
+<div class="subtitle">— 这一集是整个 Zero to Hero 系列里"信息密度最高"的一集</div>
+<div class="meta">
+  <span class="tag">学习笔记</span>
+  <span class="tag">Karpathy Zero to Hero</span>
+  <span class="tag">Kaiming 初始化</span>
+  <span class="tag">BatchNorm</span>
+  <span class="tag">激活与梯度诊断</span>
+  <span class="tag">PyTorch</span>
+</div>
+
+<div class="toc">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#sec1">1. 这一集解决什么问题</a></li>
+    <li><a href="#sec2">2. 第一个症状：初始 loss 远大于理论值</a></li>
+    <li><a href="#sec3">3. 第二个症状：tanh 大量饱和（"白条图"）</a></li>
+    <li><a href="#sec4">4. 权重初始化的完整推导（Kaiming）</a></li>
+    <li><a href="#sec5">5. BatchNorm：强制把激活拉回正常区间</a></li>
+    <li><a href="#sec6">6. 训练 vs 推理：BN 必须区分的两种模式</a></li>
+    <li><a href="#sec7">7. 诊断工具：3 张图诊断网络健康</a></li>
+    <li><a href="#sec8">8. PyTorch nn.Module 风格重构</a></li>
+    <li><a href="#sec9">9. Infra 视角：这一集真正埋下的工程伏笔</a></li>
+    <li><a href="#sec10">10. 可直接运行的完整代码</a></li>
+    <li><a href="#sec11">11. ⭐ 学习过程中遇到的高频卡点答疑（10 个 Q）</a></li>
+    <li><a href="#sec12">12. Karpathy 官方代码 &amp; 资源</a></li>
+  </ol>
+</div>
+
+<!-- ============================================== -->
+<h2 id="sec1">1. 这一集解决什么问题</h2>
+
+<p>Ep.2 我们已经搭起了一个 MLP，能把 dev loss 降到 ~2.17。但是有几个奇怪的现象：</p>
+
+<ol>
+  <li><b>训练一开始 loss 是 ~27</b>，而理论值应该是 <code>-log(1/27) ≈ 3.30</code> 才对</li>
+  <li><b>把激活值打印出来</b>，发现 tanh 输出大量贴在 ±1（"饱和"）</li>
+  <li><b>训练曲线开头很平</b>，模型"前 1000 步几乎不学习"</li>
+</ol>
+
+<p>这一集 Karpathy 不是来教你新的模型结构 —— 他用 <b>两个具体的工具</b>（Kaiming 初始化、BatchNorm）+ <b>一套诊断方法</b>，让你看清"神经网络为什么能训练 / 为什么训练不动"的底层机制。</p>
+
+<div class="good-callout">
+  <b>这一集的核心思想（一句话）</b>：<br>
+  神经网络的每一层都希望"输入的激活分布是均值 0、标准差 1"。
+  只要这个条件被破坏，训练就会出问题。
+  <b>整集就是围绕"如何维持这个条件"展开。</b>
+</div>
+
+<!-- ============================================== -->
+<h2 id="sec2">2. 第一个症状：初始 loss 远大于理论值</h2>
+
+<h3>2.1 理论值是多少</h3>
+
+<p>vocab_size = 27，刚初始化的模型应该对每个字符给均匀概率 1/27。NLL = <code>-log(1/27) ≈ 3.30</code>。</p>
+
+<h3>2.2 实测是多少</h3>
+
+<p>跑一下 Ep.2 的初始化代码：</p>
+
+<pre><code>logits = h @ W2 + b2     # (32, 27)
+loss = F.cross_entropy(logits, Y)
+print(loss.item())       # ≈ 27 ！！比 3.30 大 10 倍
+</code></pre>
+
+<h3>2.3 原因：W2 / b2 太大，logits 分布太宽</h3>
+
+<p>初始时 <code>W2 = randn(...)</code>、<code>b2 = randn(27)</code>，logits 中有些值偏大（比如 +5）、有些值偏小（比如 -5），softmax 后某些位置接近 1，某些位置接近 0。</p>
+
+<p>如果真实标签恰好是"接近 0 的那个位置"，<code>-log(接近 0 的概率) = 很大的数字</code>，loss 就爆了。</p>
+
+<h3>2.4 修复：让 logits 一开始更"平"</h3>
+
+<pre><code>W2 = torch.randn((n_hidden, vocab_size)) * 0.01   # 缩小到 1/100
+b2 = torch.zeros(vocab_size)                       # 干脆置 0
+</code></pre>
+
+<p>这样初始 logits 几乎全是 0，softmax 后接近均匀分布，初始 loss ≈ 3.30 ✓</p>
+
+<div class="callout">
+  <div class="callout-title">💡 为什么不直接 W2 = zeros</div>
+  全 0 的 W2 会让所有 logits 完全相等，反向传播时所有梯度都一样，<b>所有神经元学到的东西完全相同</b>（symmetry breaking 失败）。乘 0.01 既小又有差异，是最优解。
+</div>
+
+<!-- ============================================== -->
+<h2 id="sec3">3. 第二个症状：tanh 大量饱和（"白条图"）</h2>
+
+<h3>3.1 现象</h3>
+
+<p>把隐藏层激活 <code>h = tanh(hpreact)</code> 打印成图：</p>
+
+<pre><code>plt.figure(figsize=(20, 10))
+plt.imshow((h.abs() &gt; 0.99).float(), cmap='gray', interpolation='nearest')
+</code></pre>
+
+<p>会看到一张"布满白色横条"的图：</p>
+
+<div class="ascii">神经元编号 →  0  1  2  3  4  ...  99
+样本 0   :  ■ □ □ ■ □ □ □ ■ □ ■
+样本 1   :  ■ □ □ ■ □ □ □ ■ □ ■     ← 神经元 0、3、7、9
+样本 2   :  ■ □ □ ■ □ □ □ ■ □ ■        对所有样本都饱和 → "死神经元"
+样本 31  :  ■ □ □ ■ □ □ □ ■ □ ■</div>
+
+<p><b>整列整列地饱和</b>意味着这些神经元的输出永远是 ±1，梯度永远 ≈ 0，<b>训练时它们的参数完全得不到更新</b>。</p>
+
+<h3>3.2 一个反向思考的疑问</h3>
+
+<div class="callout">
+  <div class="callout-title">🤔 tanh 在 ±∞ 时饱和，那 hpreact 不该集中在 ±∞ 才会饱和吗？</div>
+  <p>这是个非常容易混淆的点。<b>tanh 的形状</b>（饱和在 ±1）和<b>它输入的分布</b>是<b>两件独立的事</b>：</p>
+  <ul>
+    <li>tanh 的形状是函数定义本身，恒定</li>
+    <li>hpreact 的分布由<b>前一层的初始化和数据</b>决定，几乎总是近似高斯</li>
+  </ul>
+  <p>高斯分布天然集中在 0 附近，<b>但 std 太大时仍然会有 20-30% 的值溢出到饱和区</b>。这才是问题所在。</p>
+</div>
+
+<h3>3.3 为什么 hpreact 会"过大"</h3>
+
+<p>初始时 <code>W1 = randn((6, 100))</code>，每个元素 std ≈ 1。计算：</p>
+
+<pre><code>hpreact[i, j] = emb[i,0]*W1[0,j] + emb[i,1]*W1[1,j] + ... + emb[i,5]*W1[5,j] + b1[j]
+              ↑           6 项独立、零均值的乘积相加              ↑
+</code></pre>
+
+<p>统计学常识：<code>Var(X*Y) = Var(X) * Var(Y)</code>，<code>Var(X+Y) = Var(X) + Var(Y)</code>（独立时）。</p>
+
+<table>
+  <thead><tr><th>量</th><th>方差</th></tr></thead>
+  <tbody>
+    <tr><td>emb[i,k]（标准正态）</td><td>1</td></tr>
+    <tr><td>W1[k,j]（标准正态）</td><td>1</td></tr>
+    <tr><td>乘积</td><td>1×1 = 1</td></tr>
+    <tr><td>6 项求和</td><td>1+1+1+1+1+1 = <b>6</b></td></tr>
+  </tbody>
+</table>
+
+<p>所以 <code>hpreact.std() ≈ √6 ≈ 2.45</code> —— <b>这个 std 就是导致 tanh 大面积饱和的元凶</b>。</p>
+
+<!-- ============================================== -->
+<h2 id="sec4">4. 权重初始化的完整推导（Kaiming）</h2>
+
+<p>这是视频 30-40min 那段，是整集最关键也最容易绕晕的 10 分钟。下面拆成 4 步给你看。</p>
+
+<h3>Step 1：目标</h3>
+
+<p>让每一层激活的 std 保持在 1 附近，<b>既不饱和也不萎缩</b>。</p>
+
+<h3>Step 2：解决"6 项求和让方差变 6"的问题</h3>
+
+<p>既然 6 个项相加让方差从 1 涨到 6，那就<b>缩小 W</b>，让每个项的方差从 1 缩到 1/6：</p>
+
+<p>$$ W = \mathcal{N}(0, 1) \times c, \quad \text{使得 } 6c^2 = 1 \implies c = \frac{1}{\sqrt{6}} $$</p>
+
+<p>一般化为 <b>Xavier 初始化</b>：</p>
+
+<p>$$ \boxed{\;W \sim \mathcal{N}(0, 1) \times \frac{1}{\sqrt{\text{fan\_in}}}\;} $$</p>
+
+<p>这里 <code>fan_in</code> = 该层<b>输入维度</b>（W shape 是 <code>(fan_in, fan_out)</code> 的话，就是第一个数）。</p>
+
+<h3>Step 3：但是 tanh 会"压扁"std</h3>
+
+<p>把一个 std=1 的高斯过 tanh，输出的 std 不是 1，而是约 0.63（tanh 在两端饱和把数据压扁了）。如果每层都被压一次：</p>
+
+<div class="ascii">第 1 层 std = 0.63
+第 2 层 std = 0.63² = 0.40
+第 3 层 std = 0.63³ = 0.25
+...
+第 10 层 std ≈ 0.01    ← 信号几乎消失</div>
+
+<h3>Step 4：用 gain 补偿</h3>
+
+<p>事先把 W 放大 1/0.63 ≈ 1.59 倍，过完 tanh 正好恢复 std=1。这个补偿系数叫 <b>gain</b>。</p>
+
+<table>
+  <thead><tr><th>激活函数</th><th>gain</th></tr></thead>
+  <tbody>
+    <tr><td>linear / 恒等</td><td>1.0</td></tr>
+    <tr><td><b>tanh</b></td><td><b>5/3 ≈ 1.667</b></td></tr>
+    <tr><td>ReLU</td><td>√2 ≈ 1.414</td></tr>
+  </tbody>
+</table>
+
+<h3>最终公式（Kaiming 初始化）</h3>
+
+<p>$$ \boxed{\;W \sim \mathcal{N}(0, 1) \times \frac{\text{gain}}{\sqrt{\text{fan\_in}}}\;} $$</p>
+
+<pre><code>fan_in = block_size * n_embd        # 例如 30
+W1 = torch.randn((fan_in, n_hidden)) * (5/3) / fan_in**0.5
+b1 = torch.zeros(n_hidden)           # bias 用小值或 0
+</code></pre>
+
+<h3>验证：跑一下三种初始化</h3>
+
+<pre><code>import torch, math
+
+emb = torch.randn(1000, 6)
+
+for label, W_scale in [
+    ('朴素初始化',         1.0),
+    ('Xavier (除 √fan_in)', 1.0 / math.sqrt(6)),
+    ('Kaiming (带 gain=5/3)', (5/3) / math.sqrt(6)),
+]:
+    W = torch.randn(6, 100) * W_scale
+    h = torch.tanh(emb @ W)
+    print(f'{label:25s}  hpreact std={(emb @ W).std():.3f}  tanh std={h.std():.3f}  '
+          f'饱和={((h.abs()&gt;0.99).float().mean()):.1%}')
+</code></pre>
+
+<p>预期输出（约略）：</p>
+
+<pre><code>朴素初始化                    hpreact std=2.450  tanh std=0.768  饱和=18.0%
+Xavier (除 √fan_in)         hpreact std=1.000  tanh std=0.626  饱和=0.3%
+Kaiming (带 gain=5/3)       hpreact std=1.668  tanh std=0.928  饱和=3.5%
+</code></pre>
+
+<div class="good-callout">
+  <b>关键洞察</b>：Kaiming 的 hpreact std=1.67 看起来"比 Xavier 的 1.0 还大"，但<b>过完 tanh 之后</b>反而是 Kaiming 的 std 接近 1（最健康）。
+  <b>真正要稳定的是激活函数的输出，不是它的输入。</b>
+</div>
+
+<!-- ============================================== -->
+<h2 id="sec5">5. BatchNorm：强制把激活拉回正常区间</h2>
+
+<p>Kaiming 初始化有 3 个局限：</p>
+
+<ol>
+  <li><b>只对初始化的那一刻有效</b>。训练几步后 W 被更新，理论保证失效</li>
+  <li><b>深网络误差累积</b>。第 10 层 std 可能漂到 0.7 或 1.5</li>
+  <li><b>对每种激活函数都要重新算 gain</b>。GELU、SwiGLU 没有干净的解析解</li>
+</ol>
+
+<p>BatchNorm 的想法：与其精心设计初始化，不如在 forward 里<b>强行</b>把 hpreact 标准化。</p>
+
+<h3>5.1 BatchNorm 的 4 步</h3>
+
+<pre><code># Step 1：算 batch 的均值（每个神经元独立）
+bnmean = hpreact.mean(0, keepdim=True)         # shape (1, 200)
+
+# Step 2：算 batch 的标准差
+bnstd  = hpreact.std(0, keepdim=True)          # shape (1, 200)
+
+# Step 3：标准化
+hpreact_norm = (hpreact - bnmean) / bnstd      # mean=0, std=1
+
+# Step 4：可学习的缩放和平移
+hpreact = bngain * hpreact_norm + bnbias       # γβ
+</code></pre>
+
+<h3>5.2 为什么必须沿 dim=0（样本维度）</h3>
+
+<p>hpreact shape <code>(32, 200)</code> = 32 个样本 × 200 个神经元。</p>
+
+<ul>
+  <li><code>mean(0)</code> 跨样本：<b>每个神经元独立标准化</b> ✅</li>
+  <li><code>mean(1)</code> 跨神经元：把 200 个不同神经元混起来 ❌（语义错误）</li>
+</ul>
+
+<p>每个神经元有自己的"语义"（一个学元音、一个学辅音...），不能混着标准化。</p>
+
+<h3>5.3 为什么要 γβ 这两个可学习参数</h3>
+
+<div class="callout">
+  <div class="callout-title">这是 BatchNorm 设计中最深的一招</div>
+  <p>强制 std=1, mean=0 是不是过度约束？也许某层的最佳分布是 std=2 或 mean=0.3？</p>
+  <p><b>γβ 让模型自己说了算</b>：BN 给了一个良好起点，γβ 让模型自由微调。</p>
+  <pre><code>初始：bngain=1, bnbias=0 → 等于纯标准化
+训练后：bngain 和 bnbias 收敛到最适合这层的值</code></pre>
+</div>
+
+<h3>5.4 一个常见担忧</h3>
+
+<div class="callout">
+  <div class="callout-title">🤔 既然 γβ 自由调，模型不会学到 bngain=5 让 tanh 重新饱和吗？</div>
+  <p>理论上可能，但实际不严重，因为有<b>自我修正机制</b>：</p>
+  <ul>
+    <li>bngain 大 → tanh 饱和 → 梯度消失 → 推 bngain 变小</li>
+    <li>bngain 小 → tanh 退化为线性 → loss 变差 → 推 bngain 变大</li>
+  </ul>
+  <p>梯度下降会自动找到 trade-off。实测多数神经元的 bngain 收敛到 0.3~1.8 区间，极少越界。</p>
+</div>
+
+<!-- ============================================== -->
+<h2 id="sec6">6. 训练 vs 推理：BN 必须区分的两种模式</h2>
+
+<h3>6.1 训练时一切正常，但推理时呢？</h3>
+
+<p>BN 在训练时用 <b>当前 batch</b> 的 mean/std。但推理时往往只有 <b>1 个样本</b>：</p>
+
+<pre><code>hpreact.shape   # (1, 200)
+hpreact.std(0)  # 全是 0 ！每列只有一个数，std 不可算
+</code></pre>
+
+<p>→ 推理时<b>不能用 batch 统计量</b>。</p>
+
+<h3>6.2 解决方案：训练时维护 running 统计量</h3>
+
+<pre><code>bnmean_running = torch.zeros((1, n_hidden))
+bnstd_running  = torch.ones((1, n_hidden))
+
+# 训练时每步用 EMA 更新
+with torch.no_grad():
+    bnmean_running = 0.999 * bnmean_running + 0.001 * bnmean_i
+    bnstd_running  = 0.999 * bnstd_running  + 0.001 * bnstd_i
+
+# 推理时用 running 统计量
+hpreact_norm = (hpreact - bnmean_running) / bnstd_running
+</code></pre>
+
+<h3>6.3 关于那个 0.001（EMA / 指数移动平均）</h3>
+
+<p>通用公式 <code>new = (1-α) * old + α * current</code>。α 越小，平滑越强。</p>
+
+<table>
+  <thead><tr><th>α</th><th>有效平均窗口</th><th>适用场景</th></tr></thead>
+  <tbody>
+    <tr><td>0.1（PyTorch 默认）</td><td>最近 10 个 batch</td><td>训练步数较少（&lt;1万）</td></tr>
+    <tr><td>0.01</td><td>最近 100 个 batch</td><td>一般场景</td></tr>
+    <tr><td><b>0.001（Karpathy 选择）</b></td><td><b>最近 1000 个 batch</b></td><td><b>20 万步训练 / LLM 预训练</b></td></tr>
+  </tbody>
+</table>
+
+<div class="infra-callout">
+  <div class="callout-title">⚙️ Infra 视角</div>
+  EMA 在 ML 系统里到处都是：Adam 优化器、loss 监控曲线、StyleGAN/Diffusion 的 EMA model、训练监控平滑。
+  <b>对 Kafka 内核工程师来说，这就是 broker 监控里的 EWMA（指数加权移动平均）</b>，思想完全一样。
+</div>
+
+<h3>6.4 PyTorch 标准做法</h3>
+
+<pre><code># 训练时
+model.train()
+output = model(X_batch)
+loss.backward()
+
+# 推理 / 评估时
+model.eval()                 # ← BN 自动切换到用 running 统计量
+with torch.no_grad():        # ← 关闭梯度跟踪，省显存
+    output = model(X_new)
+</code></pre>
+
+<div class="warn-callout">
+  <b>经典 bug</b>：推理时忘了 <code>model.eval()</code>，BN 用 1 个样本的统计量（std=0），结果错乱。<b>面试常考</b>。
+</div>
+
+<!-- ============================================== -->
+<h2 id="sec7">7. 诊断工具：3 张图诊断网络健康</h2>
+
+<p>Karpathy 视频里反复用这 3 张图诊断模型，<b>是真实工程中的"训练 debug 工具"</b>。</p>
+
+<h3>7.1 激活分布直方图</h3>
+
+<pre><code>plt.hist(h.flatten().tolist(), 50)
+</code></pre>
+
+<p>健康模型应该看到一个<b>钟形分布</b>，集中在 0 附近，两端衰减。如果两端有"尖峰"（贴在 ±1），说明饱和。</p>
+
+<h3>7.2 梯度分布直方图</h3>
+
+<pre><code>plt.hist(h.grad.flatten().tolist(), 50)
+</code></pre>
+
+<p>梯度也应该是钟形。如果梯度集中在 0，说明<b>梯度消失</b>。</p>
+
+<h3>7.3 参数:梯度比（每个参数）</h3>
+
+<pre><code>for p in parameters:
+    ratio = (p.grad.std() / p.data.std()).log10().item()
+    print(f'shape {tuple(p.shape):20s}  ratio = {ratio:.3f}')
+</code></pre>
+
+<p>经验法则：<b>这个 ratio 应该在 -3 左右</b>（即梯度的 std 约为参数的 1/1000）。</p>
+
+<ul>
+  <li>ratio &gt; -1：梯度太大，可能 loss 爆炸</li>
+  <li>ratio &lt; -5：梯度太小，参数几乎不更新</li>
+</ul>
+
+<!-- ============================================== -->
+<h2 id="sec8">8. PyTorch nn.Module 风格重构</h2>
+
+<p>视频最后把代码重写成 PyTorch 的标准模块化风格。这一段没有新概念，但是<b>从这一集开始所有代码都用这种风格</b>，要适应。</p>
+
+<pre><code>class Linear:
+    def __init__(self, fan_in, fan_out, bias=True):
+        self.weight = torch.randn((fan_in, fan_out)) / fan_in**0.5
+        self.bias = torch.zeros(fan_out) if bias else None
+    def __call__(self, x):
+        self.out = x @ self.weight
+        if self.bias is not None:
+            self.out += self.bias
+        return self.out
+    def parameters(self):
+        return [self.weight] + ([] if self.bias is None else [self.bias])
+
+
+class BatchNorm1d:
+    def __init__(self, dim, eps=1e-5, momentum=0.1):
+        self.eps = eps
+        self.momentum = momentum
+        self.training = True
+        # 可学习参数
+        self.gamma = torch.ones(dim)
+        self.beta = torch.zeros(dim)
+        # 缓冲区（不参与训练，只随训练数据更新）
+        self.running_mean = torch.zeros(dim)
+        self.running_var = torch.ones(dim)
+    def __call__(self, x):
+        if self.training:
+            xmean = x.mean(0, keepdim=True)
+            xvar = x.var(0, keepdim=True)
+        else:
+            xmean = self.running_mean
+            xvar = self.running_var
+        xhat = (x - xmean) / torch.sqrt(xvar + self.eps)
+        self.out = self.gamma * xhat + self.beta
+        # 更新 running 统计量
+        if self.training:
+            with torch.no_grad():
+                self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * xmean
+                self.running_var = (1 - self.momentum) * self.running_var + self.momentum * xvar
+        return self.out
+    def parameters(self):
+        return [self.gamma, self.beta]
+
+
+class Tanh:
+    def __call__(self, x):
+        self.out = torch.tanh(x)
+        return self.out
+    def parameters(self):
+        return []
+</code></pre>
+
+<p>组装成一个网络：</p>
+
+<pre><code>n_embd, n_hidden = 10, 100
+C = torch.randn((vocab_size, n_embd))
+layers = [
+    Linear(n_embd * block_size, n_hidden, bias=False),  # bias 被 BN 接管，可省
+    BatchNorm1d(n_hidden),
+    Tanh(),
+    Linear(n_hidden, n_hidden, bias=False),
+    BatchNorm1d(n_hidden),
+    Tanh(),
+    # ... 可以堆 6 层 ...
+    Linear(n_hidden, vocab_size, bias=False),
+    BatchNorm1d(vocab_size),                            # 最后一层也 BN
+]
+</code></pre>
+
+<div class="callout">
+  <div class="callout-title">💡 BN 后 bias 是冗余的</div>
+  <code>Linear(..., bias=True)</code> 加的 bias 会被紧跟其后的 BN 的 <code>减 bnmean</code> 抵消，效果由 <code>bnbias</code> 接管。
+  所以 <b>Linear + BatchNorm 的标准写法是 <code>Linear(..., bias=False)</code></b>。
+</div>
+
+<!-- ============================================== -->
+<h2 id="sec9">9. Infra 视角：这一集真正埋下的工程伏笔</h2>
+
+<div class="infra-callout">
+<div class="callout-title">🛠 这一集对 AI Infra 转型的核心价值</div>
+
+<ol>
+  <li><b>初始化敏感性 = 大模型训练 loss spike 的根因之一</b><br>
+      千亿模型预训练时，loss 偶尔会突然飙升（spike）然后崩掉。一个主要原因就是<b>深层激活的 std 漂移到了危险区间</b>。Megatron-LM 有专门的初始化策略来缓解。</li>
+
+  <li><b>BatchNorm → LayerNorm/RMSNorm 的演化</b><br>
+      LLM 不用 BatchNorm，用 LayerNorm（每个样本独立标准化，不依赖 batch 维度）。但<b>"强制标准化 + γβ 可学习"的思想完全一致</b>。
+      RMSNorm 是 LayerNorm 的简化版（只算 std，不算 mean），LLaMA 系列在用，省 20% 计算。</li>
+
+  <li><b>训练 / 推理模式切换是推理引擎的核心常识</b><br>
+      vLLM 推理时全程在 <code>model.eval()</code> + <code>torch.no_grad()</code> 模式，BN/LN/Dropout 都用 running 统计量或关闭。
+      <b>忘记切换是经典 bug，面试官常问</b>。</li>
+
+  <li><b>EMA 思想在训练系统里到处都是</b><br>
+      Adam 优化器的 <code>betas=(0.9, 0.999)</code> 就是 EMA 的 α；loss 平滑显示用 EMA；
+      StyleGAN/Diffusion 模型的"EMA weights"也是这个思路。<b>对 Kafka 内核工程师来说，这就是 broker 监控里的 EWMA</b>。</li>
+
+  <li><b>诊断工具是面试 deep talk 的核武器</b><br>
+      "训练不稳定怎么 debug" → 看激活分布、看梯度分布、看参数:梯度比。
+      这一集教的 3 张图<b>就是工业界做训练 debug 的标准动作</b>。</li>
+
+  <li><b>BN 的 batch size 依赖 → 现代 LLM 抛弃它的原因</b><br>
+      序列任务里"一个 batch 内不同样本序列长度不同"导致 BN 统计不稳。
+      LayerNorm 解决了这个问题——它在每个 token 内独立标准化，与 batch 维度无关。
+      <b>这是 Transformer 论文选 LayerNorm 而非 BN 的根本原因</b>。</li>
+</ol>
+</div>
+
+<!-- ============================================== -->
+<h2 id="sec10">10. 可直接运行的完整代码</h2>
+
+<pre><code>"""
+makemore Ep.3 —— Kaiming 初始化 + BatchNorm
+"""
+import torch
+import torch.nn.functional as F
+import random
+import math
+
+# ============ 1. 读数据 + 字符表 ============
+words = open('names.txt').read().splitlines()
+chars = sorted(set(''.join(words)))
+stoi = {s: i + 1 for i, s in enumerate(chars)}
+stoi['.'] = 0
+itos = {i: s for s, i in stoi.items()}
+V = len(stoi)
+
+# ============ 2. 数据集 ============
+block_size = 3
+def build_dataset(ws):
+    X, Y = [], []
+    for w in ws:
+        ctx = [0] * block_size
+        for ch in w + '.':
+            ix = stoi[ch]
+            X.append(ctx)
+            Y.append(ix)
+            ctx = ctx[1:] + [ix]
+    return torch.tensor(X), torch.tensor(Y)
+
+random.seed(42); random.shuffle(words)
+n1, n2 = int(0.8 * len(words)), int(0.9 * len(words))
+Xtr,  Ytr  = build_dataset(words[:n1])
+Xdev, Ydev = build_dataset(words[n1:n2])
+Xte,  Yte  = build_dataset(words[n2:])
+
+# ============ 3. 模型参数（Kaiming + BN） ============
+n_embd, n_hidden = 10, 200
+g = torch.Generator().manual_seed(2147483647)
+
+C  = torch.randn((V, n_embd), generator=g)
+
+# W1：Kaiming 初始化（带 tanh gain）
+W1 = torch.randn((block_size * n_embd, n_hidden), generator=g) * (5/3) / (block_size * n_embd)**0.5
+# 不需要 b1（被 BN 接管）
+
+# W2：缩小到 0.01，初始 logits 接近 0
+W2 = torch.randn((n_hidden, V), generator=g) * 0.01
+b2 = torch.zeros(V)
+
+# BatchNorm 参数
+bngain = torch.ones((1, n_hidden))
+bnbias = torch.zeros((1, n_hidden))
+
+# 推理时用的 running 统计量（不参与训练）
+bnmean_running = torch.zeros((1, n_hidden))
+bnstd_running  = torch.ones((1, n_hidden))
+
+parameters = [C, W1, W2, b2, bngain, bnbias]
+for p in parameters:
+    p.requires_grad = True
+print(f'#params = {sum(p.nelement() for p in parameters)}')
+
+# ============ 4. 训练循环 ============
+batch_size = 32
+max_steps = 200_000
+
+for step in range(max_steps):
+    ix = torch.randint(0, Xtr.shape[0], (batch_size,))
+    Xb, Yb = Xtr[ix], Ytr[ix]
+    
+    # === forward ===
+    emb = C[Xb]
+    embcat = emb.view(emb.shape[0], -1)
+    hpreact = embcat @ W1                          # (32, 200)
+    
+    # --- BatchNorm ---
+    bnmeani = hpreact.mean(0, keepdim=True)
+    bnstdi  = hpreact.std(0, keepdim=True)
+    hpreact = bngain * (hpreact - bnmeani) / bnstdi + bnbias
+    
+    # 更新 running 统计量
+    with torch.no_grad():
+        bnmean_running = 0.999 * bnmean_running + 0.001 * bnmeani
+        bnstd_running  = 0.999 * bnstd_running  + 0.001 * bnstdi
+    
+    h = torch.tanh(hpreact)
+    logits = h @ W2 + b2
+    loss = F.cross_entropy(logits, Yb)
+    
+    # === backward ===
+    for p in parameters:
+        p.grad = None
+    loss.backward()
+    
+    # === update ===
+    lr = 0.1 if step &lt; 100_000 else 0.01
+    for p in parameters:
+        p.data += -lr * p.grad
+    
+    if step % 10_000 == 0:
+        print(f'step {step:6d}  loss = {loss.item():.4f}')
+
+# ============ 5. 评估（推理模式） ============
+@torch.no_grad()
+def split_loss(split):
+    X, Y = {'train': (Xtr, Ytr), 'dev': (Xdev, Ydev), 'test': (Xte, Yte)}[split]
+    emb = C[X]
+    embcat = emb.view(emb.shape[0], -1)
+    hpreact = embcat @ W1
+    # 推理模式：用 running 统计量
+    hpreact = bngain * (hpreact - bnmean_running) / bnstd_running + bnbias
+    h = torch.tanh(hpreact)
+    logits = h @ W2 + b2
+    loss = F.cross_entropy(logits, Y)
+    print(f'{split} loss = {loss.item():.4f}')
+
+split_loss('train')
+split_loss('dev')
+
+# ============ 6. 采样 ============
+g = torch.Generator().manual_seed(2147483647 + 10)
+for _ in range(20):
+    out, ctx = [], [0] * block_size
+    while True:
+        emb = C[torch.tensor([ctx])]
+        embcat = emb.view(1, -1)
+        hpreact = embcat @ W1
+        hpreact = bngain * (hpreact - bnmean_running) / bnstd_running + bnbias
+        h = torch.tanh(hpreact)
+        logits = h @ W2 + b2
+        probs = F.softmax(logits, dim=1)
+        ix = torch.multinomial(probs, 1, generator=g).item()
+        ctx = ctx[1:] + [ix]
+        if ix == 0:
+            break
+        out.append(itos[ix])
+    print(''.join(out))
+</code></pre>
+
+<div class="good-callout">
+  <b>预期结果</b>：
+  <ul style="margin:6px 0">
+    <li>train loss ≈ 2.07, dev loss ≈ <b>2.10</b>（比 Ep.2 的 2.17 进一步下降）</li>
+    <li>初始 loss ≈ 3.30（不再是 ~27）</li>
+    <li>训练前期 loss 立即下降（不再有"卡 1000 步"）</li>
+    <li>"白条图"几乎全黑（饱和神经元 &lt; 5%）</li>
+  </ul>
+</div>
+
+<!-- ============================================== -->
+<h2 id="sec11">11. ⭐ 学习过程中遇到的高频卡点答疑（10 个 Q）</h2>
+
+<p>这一集是整个系列里"信息密度最高"的一集，下面是我在学这一集时实际卡住的所有问题。<b>按视频时间顺序整理</b>。</p>
+
+<!-- Q1 -->
+<div class="qa-callout">
+  <div class="qa-q">Q1：<code>@torch.no_grad()</code> 装饰器是什么意思？不算梯度怎么训练？</div>
+  <p><b>一句话</b>：<code>@torch.no_grad()</code> 用在"评估"函数上，<b>不</b>用在"训练循环"上。训练循环里仍然正常算梯度、反向传播、更新参数。</p>
+  
+  <p><b>原理</b>：PyTorch 默认在每个张量运算时偷偷建一张"反向求导图"（autograd graph），这要花显存和算力。<code>torch.no_grad()</code> 让接下来的运算<b>不建图、不存中间值</b>。</p>
+  
+  <p><b>什么时候用</b>：</p>
+  <table>
+    <tr><th>场景</th><th>加 no_grad 吗？</th></tr>
+    <tr><td>训练（forward + backward + update）</td><td>❌ 不加</td></tr>
+    <tr><td>计算 dev/test loss</td><td>✅ 加</td></tr>
+    <tr><td>推理 / 生成样本</td><td>✅ 加</td></tr>
+    <tr><td>梯度统计、画激活直方图</td><td>✅ 加</td></tr>
+  </table>
+</div>
+
+<!-- Q2 -->
+<div class="qa-callout">
+  <div class="qa-q">Q2：<code>hpreact</code> 是什么？读 "react" 还是 "pre-act"？</div>
+  <p><b>读 "h pre-act"</b>，是 <code>hidden pre-activation</code> 的缩写 —— 隐藏层在过激活函数之前的值。</p>
+  
+  <pre><code>hpreact = emb_cat @ W1 + b1     # 隐藏层"激活前"的值
+h       = torch.tanh(hpreact)   # 隐藏层"激活后"的值</code></pre>
+
+  <p><b>为什么要分开命名</b>：诊断激活函数的"健康程度"必须看它的<b>输入</b>（pre-activation），因为输出已经被压扁过了，看不出原始信号有多大。</p>
+
+  <p>术语家族（指同一类东西）：<code>pre-activation</code>、<code>logits</code>（特指最后一层）、<code>linear output</code>、数学符号 <code>z</code>。</p>
+</div>
+
+<!-- Q3 -->
+<div class="qa-callout">
+  <div class="qa-q">Q3：tanh 在 ±∞ 时饱和，hpreact 应该集中在 ±∞ 才会饱和吗？为什么打印出来分布在 0 附近？</div>
+  <p>你混淆了"因果关系"。<b>tanh 的形状</b>（饱和在 ±1）和它<b>输入的分布</b>是<b>两件独立的事</b>。</p>
+
+  <ul>
+    <li>tanh 的形状是函数定义本身，<b>恒定</b></li>
+    <li>hpreact 的分布<b>由前一层的初始化和数据决定</b>，几乎总是近似高斯</li>
+  </ul>
+
+  <p><b>关键</b>：hpreact 集中在 0 附近不代表 tanh 不饱和。高斯分布的"集中"是相对的——std=2.5 时，<b>仍有 ~30% 的值落到 ±3 之外</b>，这部分就在 tanh 饱和区。</p>
+
+  <p>所以问题应该问<b>"为什么前一层会输出 std=2.5 这么大的分布"</b>，答案在 Q5。</p>
+</div>
+
+<!-- Q4 -->
+<div class="qa-callout">
+  <div class="qa-q">Q4：std=0.1（太小）为什么也不行？输入小不是更安全吗？</div>
+  <p><b>因为 tanh 在 |x|&lt;0.5 时近似线性</b>，整个深网络坍缩成单层线性变换：</p>
+  <pre><code>当 hpreact 全在 ±0.1：
+h = tanh(hpreact) ≈ hpreact           # tanh 退化为恒等
+out = h @ W2 + b2 ≈ hpreact @ W2 + b2
+    = X @ (W1 @ W2) + (b1 @ W2 + b2)  # 等价于一层线性！</code></pre>
+
+  <p>同时梯度也会逐层缩小（信号 0.1 → 0.01 → 0.001 → ...），<b>梯度消失</b>。</p>
+
+  <p><b>结论</b>：std 太大和太小都不行。两者都让信号传不动，只是机制不同：</p>
+  <ul>
+    <li>太大 → tanh 饱和 → 梯度被掐断</li>
+    <li>太小 → tanh 退化为线性 → 信号萎缩，深网络等于一层</li>
+  </ul>
+</div>
+
+<!-- Q5 -->
+<div class="qa-callout">
+  <div class="qa-q">Q5：30-40min 那段权重初始化推导没听懂，能再讲一遍吗？</div>
+  <p>4 步走：</p>
+  <ol>
+    <li><b>问题</b>：朴素初始化 <code>W=randn(6,100)</code> 会让 hpreact std ≈ √6 ≈ 2.45（因为 6 项独立项相加，方差加和）</li>
+    <li><b>缩小 W</b>：让 <code>W = randn * 1/√fan_in</code>，则 hpreact std=1（这就是 <b>Xavier</b>）</li>
+    <li><b>但 tanh 会压扁 std</b>：输入 std=1 过完 tanh 变 0.63，深层信号衰减</li>
+    <li><b>用 gain 补偿</b>：<code>W = randn * gain/√fan_in</code>，tanh 的 gain=5/3，过完 tanh 正好恢复 std=1</li>
+  </ol>
+
+  <p>最终公式（Kaiming/He 初始化）：</p>
+  <p>$$ W \sim \mathcal{N}(0, 1) \times \frac{\text{gain}}{\sqrt{\text{fan\_in}}} $$</p>
+
+  <p><b>fan_in</b> 是该层<b>输入维度</b>；<b>gain</b> 是激活函数的修正系数（tanh: 5/3；ReLU: √2；linear: 1）。</p>
+</div>
+
+<!-- Q6 -->
+<div class="qa-callout">
+  <div class="qa-q">Q6：既然 Kaiming 能搞定，为什么还要 BatchNorm？不是每层都能用 Kaiming 干预吗？</div>
+  <p>Kaiming 是<b>一次性</b>的"施工"，BN 是<b>每个 forward 都重新"维护"</b>：</p>
+  <table>
+    <tr><th>对比</th><th>Kaiming init</th><th>BatchNorm</th></tr>
+    <tr><td>何时生效</td><td>仅初始化时</td><td>每次 forward</td></tr>
+    <tr><td>训练中漂移</td><td>会，无法修正</td><td>自动重新校准</td></tr>
+    <tr><td>深网络</td><td>误差累积</td><td>每层独立保证</td></tr>
+    <tr><td>激活函数依赖</td><td>强（要算 gain）</td><td>几乎无关</td></tr>
+    <tr><td>开销</td><td>0（一次性）</td><td>每次 forward 都要算</td></tr>
+  </table>
+
+  <p>"BN 就是持续生效的、不依赖理论假设的、自动版的 Kaiming"。</p>
+</div>
+
+<!-- Q7 -->
+<div class="qa-callout">
+  <div class="qa-q">Q7：BN 后又乘 γβ "撤销"标准化，那 tanh 不会又饱和吗？</div>
+  <p>理论上可能，但实际不严重，原因是<b>梯度下降的自我修正机制</b>：</p>
+  <ul>
+    <li>bngain 太大 → tanh 饱和 → 梯度 ≈ 0 → 推 bngain 变小</li>
+    <li>bngain 太小 → tanh 退化为线性 → loss 变差 → 推 bngain 变大</li>
+  </ul>
+
+  <p>梯度下降会自动找到平衡点。<b>实测多数神经元的 bngain 收敛到 0.3~1.8 区间，极少越界</b>。</p>
+
+  <p>初始时 <code>bngain=1, bnbias=0</code>，BN 等于纯标准化——这是个良好起点，模型从这里渐进微调，<b>不会突然跳到糟糕位置</b>。</p>
+</div>
+
+<!-- Q8 -->
+<div class="qa-callout">
+  <div class="qa-q">Q8："训练"和"推理"特指什么？</div>
+  <table>
+    <tr><th>模式</th><th>目的</th><th>包含步骤</th></tr>
+    <tr><td><b>训练</b></td><td>调参</td><td>forward + backward + 更新参数</td></tr>
+    <tr><td><b>推理</b></td><td>用，不调</td><td>仅 forward，<b>不更新参数</b></td></tr>
+  </table>
+
+  <p><b>实际场景</b>：</p>
+  <ul>
+    <li>训练循环跑 200k 步 → 训练</li>
+    <li>训练中每 10k 步评估一次 dev loss → 推理（不更新参数）</li>
+    <li>训练完后采样生成名字 → 推理</li>
+    <li>用户用 ChatGPT 问答 → 推理</li>
+  </ul>
+
+  <p><b>必须区分的原因</b>：BatchNorm（用 batch 还是 running 统计量）、Dropout（保留还是丢弃）、梯度跟踪（开还是关）在两种模式下行为不同。</p>
+</div>
+
+<!-- Q9 -->
+<div class="qa-callout">
+  <div class="qa-q">Q9：<code>bnmean_running = 0.999 * old + 0.001 * current</code> 中的 0.999 / 0.001 怎么来的？</div>
+  <p>这是 <b>EMA（指数移动平均）</b>，通用公式 <code>new = (1-α) * old + α * current</code>。α=0.001 意味着"每次只吸收 0.1% 新值，保留 99.9% 历史"。</p>
+
+  <p>等价于"对最近 ~1/α 个 batch 做平均"：</p>
+  <table>
+    <tr><th>α</th><th>有效平均窗口</th></tr>
+    <tr><td>0.1（PyTorch 默认）</td><td>最近 10 个 batch</td></tr>
+    <tr><td>0.01</td><td>最近 100 个</td></tr>
+    <tr><td><b>0.001（Karpathy 选）</b></td><td><b>最近 1000 个</b></td></tr>
+  </table>
+
+  <p><b>为什么不直接用当前值</b>：单 batch 统计量噪声大，会让 running 抖动。EMA 平滑掉抖动，反映长期趋势。</p>
+
+  <p><b>为什么 Karpathy 选 0.001</b>：训练 20 万步，0.001 让 running 反映"整个训练的稳态"而不是"最近几个 batch"。</p>
+</div>
+
+<!-- Q10 -->
+<div class="qa-callout">
+  <div class="qa-q">Q10："tanh 唯一意义是引入非线性"对吗？</div>
+  <p><b>不严谨</b>。准确说法：</p>
+  <ul>
+    <li><b>所有激活函数</b>（tanh、ReLU、GELU）的<b>核心作用</b>都是引入非线性 —— 没有它，深网络坍缩成单层</li>
+    <li><b>tanh 相对其他激活函数</b>还有 3 个特殊性质：输出有界 [-1, 1]、零中心、平滑可导</li>
+  </ul>
+
+  <p>现代 LLM 已经基本不用 tanh 了，主流是 GELU/SwiGLU。但<b>"激活函数必须引入非线性"这个底层逻辑没变</b>。</p>
+</div>
+
+<div class="good-callout">
+  <b>📌 这一集学习的"心法"总结</b>：<br>
+  神经网络是不是"训得动"，本质上由<b>每层激活的分布</b>决定。这一集教了两个工具（Kaiming init + BatchNorm）和一套诊断方法（激活/梯度/比例 3 张图），让你<b>能看见</b>这件事。<br>
+  这是从"会调 API"到"会 debug 训练"的分水岭。
+</div>
+
+<!-- ============================================== -->
+<h2 id="sec12">12. Karpathy 官方代码 &amp; 资源</h2>
+
+<table>
+  <thead><tr><th>资源</th><th>链接</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>📺 YouTube 视频</td>
+      <td><a href="https://www.youtube.com/watch?v=P6sfmUTpUmc" target="_blank">Building makemore Part 3: Activations &amp; Gradients, BatchNorm</a></td>
+    </tr>
+    <tr>
+      <td>📓 GitHub Notebook</td>
+      <td><a href="https://github.com/karpathy/nn-zero-to-hero/blob/master/lectures/makemore/makemore_part3_bn.ipynb" target="_blank">makemore_part3_bn.ipynb</a></td>
+    </tr>
+    <tr>
+      <td>🚀 Colab 一键打开</td>
+      <td><a href="https://colab.research.google.com/github/karpathy/nn-zero-to-hero/blob/master/lectures/makemore/makemore_part3_bn.ipynb" target="_blank">在 Colab 中运行</a></td>
+    </tr>
+    <tr>
+      <td>📂 整个系列主仓库</td>
+      <td><a href="https://github.com/karpathy/nn-zero-to-hero" target="_blank">karpathy/nn-zero-to-hero</a></td>
+    </tr>
+    <tr>
+      <td>📄 BatchNorm 原论文</td>
+      <td><a href="https://arxiv.org/abs/1502.03167" target="_blank">Ioffe &amp; Szegedy 2015 - Batch Normalization</a></td>
+    </tr>
+    <tr>
+      <td>📄 Kaiming init 原论文</td>
+      <td><a href="https://arxiv.org/abs/1502.01852" target="_blank">He et al. 2015 - Delving Deep into Rectifiers</a></td>
+    </tr>
+    <tr>
+      <td>📄 PyTorch <code>calculate_gain</code> 文档</td>
+      <td><a href="https://pytorch.org/docs/stable/nn.init.html#torch.nn.init.calculate_gain" target="_blank">torch.nn.init.calculate_gain</a></td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <div class="callout-title">💡 推荐学习方式</div>
+  <b>第一遍</b>：跟视频跑代码，每出现一个新指标（loss、激活分布、梯度比）都暂停打印一下。<br>
+  <b>第二遍</b>：把 Kaiming init / BN 关掉，对比 dev loss 退化多少（应该会退到 2.45 左右）。<br>
+  <b>关键验证</b>：跑完后画一张 "白条图"，验证 BN 之后饱和神经元 &lt; 5%。
+</div>
+
+<hr>
+
+<h2 id="summary">📌 一句话总结</h2>
+
+<blockquote>
+  <b>Ep.3 没有教任何新的模型结构。它教的是"网络能不能训得动"这件事的底层机制。</b><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;Kaiming init 通过精心设计初始 W 的 std 让激活落在工作区；<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;BatchNorm 进一步在每次 forward 强行标准化、不依赖初始化和深度；<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;3 张诊断图让你能"看见"训练健康度。<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;这是<b>从"会调 API"到"能 debug 训练"</b>的分水岭。
+</blockquote>
+
+<h3>🔭 下一步</h3>
+<ul>
+  <li>跑通本文末尾完整代码，验证 dev loss ≈ 2.10、初始 loss ≈ 3.30</li>
+  <li>对照视频画 3 张诊断图（激活分布、梯度分布、参数:梯度比）</li>
+  <li>把 Linear / BatchNorm1d / Tanh 用 nn.Module 风格重写（已在 §8 给出）</li>
+  <li>进入 <b>Ep.5 "Let's build GPT"</b>（Ep.4 backprop ninja 可跳过 / 只看前 30min）—— 这是你转 AI Infra 推理方向真正的主战场</li>
+</ul>
+
+</body>
+</html>

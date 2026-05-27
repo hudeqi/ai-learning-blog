@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Karpathy makemore 第 1 集 · Bigram 字符级语言模型 — 学习笔记</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] }
+  };
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<style>
+  :root {
+    --bg: #fbfaf7;
+    --fg: #1f2328;
+    --muted: #57606a;
+    --accent: #0969da;
+    --accent2: #8250df;
+    --code-bg: #f6f8fa;
+    --code-fg: #24292f;
+    --border: #d0d7de;
+    --callout-bg: #fff8c5;
+    --callout-border: #d4a72c;
+    --infra-bg: #ddf4ff;
+    --infra-border: #54aeff;
+    --good-bg: #dafbe1;
+    --good-border: #4ac26b;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    line-height: 1.78;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 44px 28px 96px;
+    font-size: 16px;
+  }
+  h1 {
+    font-size: 30px;
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 14px;
+    margin-bottom: 6px;
+    line-height: 1.35;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 14px;
+    margin-bottom: 8px;
+  }
+  .meta {
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 36px;
+  }
+  h2 {
+    font-size: 23px;
+    margin-top: 52px;
+    border-left: 4px solid var(--accent);
+    padding-left: 12px;
+  }
+  h3 {
+    font-size: 18px;
+    margin-top: 30px;
+    color: var(--accent2);
+  }
+  h4 {
+    font-size: 16px;
+    margin-top: 22px;
+    color: var(--fg);
+  }
+  p { margin: 14px 0; }
+  code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 14px;
+    color: #cf222e;
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-size: 13.5px;
+    line-height: 1.6;
+  }
+  pre code {
+    background: transparent;
+    padding: 0;
+    color: inherit;
+    font-size: 13.5px;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  blockquote {
+    border-left: 4px solid var(--border);
+    color: var(--muted);
+    padding: 4px 14px;
+    margin: 18px 0;
+    background: #fff;
+  }
+
+  .callout {
+    background: var(--callout-bg);
+    border-left: 4px solid var(--callout-border);
+    padding: 12px 16px;
+    margin: 18px 0;
+    border-radius: 4px;
+  }
+  .callout-title {
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .infra-callout {
+    background: var(--infra-bg);
+    border-left: 4px solid var(--infra-border);
+    padding: 14px 18px;
+    margin: 22px 0;
+    border-radius: 4px;
+  }
+  .infra-callout .callout-title {
+    color: #0a3069;
+  }
+
+  .good-callout {
+    background: var(--good-bg);
+    border-left: 4px solid var(--good-border);
+    padding: 12px 16px;
+    margin: 18px 0;
+    border-radius: 4px;
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 18px 0;
+    font-size: 14.5px;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: #f6f8fa;
+    font-weight: 600;
+  }
+
+  ul, ol { padding-left: 28px; }
+  li { margin: 6px 0; }
+
+  .toc {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 22px;
+    margin: 28px 0;
+    font-size: 14.5px;
+  }
+  .toc-title {
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: var(--muted);
+    font-size: 13px;
+    letter-spacing: 0.5px;
+  }
+  .toc ol { padding-left: 22px; margin: 6px 0; }
+
+  .step {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    border-radius: 50%;
+    width: 22px;
+    height: 22px;
+    text-align: center;
+    line-height: 22px;
+    font-size: 13px;
+    font-weight: 600;
+    margin-right: 6px;
+  }
+
+  .tag {
+    display: inline-block;
+    background: #f6f8fa;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1px 10px;
+    font-size: 12px;
+    color: var(--muted);
+    margin-right: 6px;
+  }
+
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 40px 0;
+  }
+
+  .ascii {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    white-space: pre;
+    background: #fff;
+    border: 1px dashed var(--border);
+    padding: 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-x: auto;
+  }
+</style>
+</head>
+<body>
+
+<h1>Karpathy <code>makemore</code> 第 1 集 · Bigram 字符级语言模型</h1>
+<div class="subtitle">— 从频次统计到神经网络，理解"语言模型"最朴素的形态</div>
+<div class="meta">
+  <span class="tag">学习笔记</span>
+  <span class="tag">Karpathy Zero to Hero</span>
+  <span class="tag">Bigram</span>
+  <span class="tag">PyTorch</span>
+  <span class="tag">语言模型入门</span>
+</div>
+
+<div class="toc">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#sec1">1. makemore 是什么 · 任务定义</a></li>
+    <li><a href="#sec2">2. 数据加载 & 字符表 & 特殊 token</a></li>
+    <li><a href="#sec3">3. 方法一：计数法（统计 Bigram 频次）</a></li>
+    <li><a href="#sec4">4. 评估模型：似然与 NLL Loss</a></li>
+    <li><a href="#sec5">5. 模型平滑（防止 log(0))</a></li>
+    <li><a href="#sec6">6. 方法二:神经网络法（与计数法等价）</a></li>
+    <li><a href="#sec7">7. 两种方法的对照</a></li>
+    <li><a href="#sec8">8. 为什么这一集是 Transformer 的起点</a></li>
+    <li><a href="#sec9">9. 给 AI Infra / Kafka 背景读者的视角</a></li>
+    <li><a href="#sec10">10. 一份可直接运行的完整代码</a></li>
+  </ol>
+</div>
+
+<!-- ============================================== -->
+<h2 id="sec1">1. makemore 是什么 · 任务定义</h2>
+
+<p><b>makemore</b> 是 Karpathy 在 "Neural Networks: Zero to Hero" 系列中第二个项目。它的目标非常朴素：</p>
+
+<blockquote>
+  给定一份「真实的英文名字」清单（约 32,000 个），训练一个模型，
+  让它能<b>生成「看起来像名字」</b>的新字符串，例如：
+  <code>emma, olivia, ava, ...</code> → <code>jazlyn, kaelin, novahlee, ...</code>
+</blockquote>
+
+<p>这本质上就是一个 <b>字符级语言模型 (Character-Level Language Model)</b>。它和 GPT 的目标完全一致：</p>
+
+<ul>
+  <li>GPT：给定前面若干 token，预测下一个 token</li>
+  <li>makemore：给定前面若干字符，预测下一个字符</li>
+</ul>
+
+<p>第 1 集采用最简单的形式 —— <b>Bigram 模型</b>：<u>只用前一个字符来预测下一个字符</u>。
+也就是说，模型的"记忆"窗口长度 = 1。</p>
+
+<p>这是个非常弱的模型，但它<b>麻雀虽小五脏俱全</b>：建模、训练、采样、评估、损失函数、参数更新…
+所有语言模型的"骨架"它都有。后面 4 集会一步步把这个骨架升级成 MLP → WaveNet → Transformer。</p>
+
+<!-- ============================================== -->
+<h2 id="sec2">2. 数据加载 & 字符表 & 特殊 token</h2>
+
+<h3>2.1 原始数据</h3>
+<pre><code>words = open('names.txt', 'r').read().splitlines()
+# ['emma', 'olivia', 'ava', 'isabella', 'sophia', ...]
+len(words)  # 32033
+</code></pre>
+
+<h3>2.2 构建字符表</h3>
+<p>把所有出现过的字符收集起来，并加入一个特殊 token <code>'.'</code> 来同时表示
+<b>"序列开始"</b> 和 <b>"序列结束"</b>。</p>
+
+<pre><code>chars = sorted(list(set(''.join(words))))   # ['a', 'b', ..., 'z']
+stoi = {s: i+1 for i, s in enumerate(chars)} # a→1, b→2, ..., z→26
+stoi['.'] = 0                                # 特殊 token '.' → 0
+itos = {i: s for s, i in stoi.items()}       # 反向映射
+vocab_size = len(stoi)                       # 27
+</code></pre>
+
+<div class="callout">
+  <div class="callout-title">💡 为什么用一个 token <code>.</code> 同时表示开始 & 结束？</div>
+  Karpathy 的处理很简洁：每个名字 <code>"emma"</code> 被扩展成 <code>". e m m a ."</code>，
+  这样 Bigram 训练时既学到「以 <code>.</code> 开头时，第一个字符的分布」，
+  也学到「什么字符后面容易接 <code>.</code>（即结束）」。
+  一个特殊符号干两件事，简化建模。
+</div>
+
+<h3>2.3 构建训练样本：所有相邻字符对</h3>
+<pre><code>xs, ys = [], []
+for w in words:
+    chs = ['.'] + list(w) + ['.']
+    for ch1, ch2 in zip(chs, chs[1:]):
+        xs.append(stoi[ch1])  # 输入：前一个字符
+        ys.append(stoi[ch2])  # 标签：后一个字符
+
+import torch
+xs = torch.tensor(xs)   # shape: (N,)
+ys = torch.tensor(ys)   # shape: (N,)
+# N ≈ 228,146 个 bigram 训练对
+</code></pre>
+
+<div class="ascii">单词 "emma" 产生的训练对：
+  ('.', 'e')   →  x=0,  y=5
+  ('e', 'm')   →  x=5,  y=13
+  ('m', 'm')   →  x=13, y=13
+  ('m', 'a')   →  x=13, y=1
+  ('a', '.')   →  x=1,  y=0</div>
+
+<!-- ============================================== -->
+<h2 id="sec3">3. 方法一：计数法（统计 Bigram 频次）</h2>
+
+<p>最朴素的想法：直接数数。<b>"a 后面跟 b 出现了多少次"</b> 这种统计量天然就是概率估计。</p>
+
+<h3>3.1 构建 27×27 频次矩阵 N</h3>
+<pre><code>N = torch.zeros((27, 27), dtype=torch.int32)
+
+for w in words:
+    chs = ['.'] + list(w) + ['.']
+    for ch1, ch2 in zip(chs, chs[1:]):
+        ix1 = stoi[ch1]
+        ix2 = stoi[ch2]
+        N[ix1, ix2] += 1
+</code></pre>
+
+<p><code>N[i, j]</code> = 字符 i 后面跟着字符 j 在训练集中出现的次数。
+可视化（Karpathy 视频里这张 27×27 热力图很出名）能直接看到 <code>"q→u"</code>、
+<code>"."→ "a/e/.."</code> 等明显的语言规律。</p>
+
+<h3>3.2 频次 → 概率（按行归一化）</h3>
+<pre><code>P = N.float()
+P = P / P.sum(dim=1, keepdim=True)   # 每一行加起来 = 1
+# P[i, j] = P(下一个字符 = j | 当前字符 = i)
+</code></pre>
+
+<div class="callout">
+  <div class="callout-title">⚠️ 关于 <code>keepdim=True</code>（容易踩坑）</div>
+  <code>P.sum(dim=1)</code> 形状是 <code>(27,)</code>，
+  <code>P.sum(dim=1, keepdim=True)</code> 形状是 <code>(27, 1)</code>。
+  只有后者才能与 <code>P</code> <b>正确广播</b>做行归一化。
+  Karpathy 在视频里专门花了几分钟讲 broadcasting，这正是昨天笔记里强调的「tensor shape 肌肉记忆」的重点。
+</div>
+
+<h3>3.3 采样（生成名字）</h3>
+<p>从 <code>.</code> 出发，根据当前字符所在行的概率分布采样下一个字符，遇到 <code>.</code> 停。</p>
+
+<pre><code>g = torch.Generator().manual_seed(2147483647)
+
+for _ in range(10):
+    out = []
+    ix = 0  # 起点是 '.'
+    while True:
+        p = P[ix]                                          # 当前行的概率分布
+        ix = torch.multinomial(p, num_samples=1,
+                               replacement=True,
+                               generator=g).item()
+        if ix == 0:
+            break
+        out.append(itos[ix])
+    print(''.join(out))
+# 典型输出：mor, axx, minaymoryles, kondlaisah, anchshizarie, ...
+</code></pre>
+
+<p>结果有点像名字，但还很"乱" —— 这正是 Bigram 模型的天花板（只看 1 个字符的记忆实在太短）。</p>
+
+<!-- ============================================== -->
+<h2 id="sec4">4. 评估模型：似然与 NLL Loss</h2>
+
+<p>"生成出来像不像名字"是主观感受，工程上需要一个数字化指标。
+语言模型最经典的指标就是 <b>训练集上的似然</b>。</p>
+
+<h3>4.1 似然 (Likelihood)</h3>
+<p>训练集所有 bigram 对的联合概率：</p>
+<p>$$ L = \prod_{i=1}^{N} P(y_i \mid x_i) $$</p>
+
+<p>这个值会非常非常小（一堆 0.x 连乘），数值上会下溢出。所以取对数：</p>
+
+<p>$$ \log L = \sum_{i=1}^{N} \log P(y_i \mid x_i) $$</p>
+
+<h3>4.2 负对数似然 (NLL) — 作为 Loss</h3>
+<p>我们希望 likelihood 越大越好 ⇒ log-likelihood 越大越好 ⇒ <b>负对数似然越小越好</b>。
+通常再除以 N 取平均，得到每个 bigram 的平均 NLL：</p>
+
+<p>$$ \mathcal{L} = -\frac{1}{N} \sum_{i=1}^{N} \log P(y_i \mid x_i) $$</p>
+
+<pre><code>log_likelihood = 0.0
+n = 0
+for w in words:
+    chs = ['.'] + list(w) + ['.']
+    for ch1, ch2 in zip(chs, chs[1:]):
+        ix1, ix2 = stoi[ch1], stoi[ch2]
+        prob = P[ix1, ix2]
+        log_likelihood += torch.log(prob)
+        n += 1
+
+nll = -log_likelihood / n
+print(f'nll = {nll.item():.4f}')   # ≈ 2.4543
+</code></pre>
+
+<div class="good-callout">
+  <b>核心直觉：</b>NLL 就是「平均每一步预测有多差」。
+  对于词表大小 27，如果模型完全瞎猜（均匀分布），NLL = ln(27) ≈ 3.30；
+  Bigram 计数法做到 ≈ 2.45，说明确实学到东西了。
+  后面 MLP / Transformer 会把这个数字一路降到 2.1、1.9、1.7…
+</div>
+
+<!-- ============================================== -->
+<h2 id="sec5">5. 模型平滑（防止 log(0))</h2>
+
+<p>如果某个 bigram 在训练集里<b>从没出现过</b>，比如 <code>P("jq"→"z")=0</code>，
+那么 <code>log(0) = -∞</code>，NLL 就爆了。</p>
+
+<p>解决方法：<b>加法平滑</b>（Laplace smoothing），把所有计数都 +k：</p>
+
+<pre><code>P = (N + 1).float()                  # 平滑系数 k=1
+P = P / P.sum(dim=1, keepdim=True)
+</code></pre>
+
+<p>k 越大，分布越"平"（越接近均匀分布），相当于<b>正则化</b>。这一思想在后面神经网络里对应权重正则项 <code>λ * (W**2).mean()</code>。</p>
+
+<!-- ============================================== -->
+<h2 id="sec6">6. 方法二：神经网络法（与计数法等价）</h2>
+
+<p>这一节是这一集的<b>真正高潮</b>。Karpathy 想让你看到：
+<u>计数法不是另一种方法，它本质上就是一个最简单的神经网络</u>。
+搞懂这个之后，把"前 1 个字符"换成"前 N 个字符"、把单层线性换成 MLP/Transformer，
+你就理解了从 Bigram 到 GPT 的全部演进。</p>
+
+<h3>6.1 模型结构</h3>
+
+<div class="ascii">输入 x (一个字符的索引, 0~26)
+     │
+     ▼
+   one-hot 编码: (27,)   ← F.one_hot(x, 27)
+     │
+     ▼
+   线性层: y = x @ W      W shape: (27, 27),  无 bias
+     │
+     ▼
+   logits  (27,)          每个位置一个"原始分数"
+     │
+     ▼
+   exp + 归一化 = softmax
+     │
+     ▼
+   probs  (27,)           概率分布，和 = 1
+</div>
+
+<p><b>关键观察</b>：参数矩阵 <code>W</code> 的形状是 <code>(27, 27)</code>，
+和计数法的频次矩阵 <code>N</code> 形状一模一样！只是 <code>W</code> 不是从数据数出来的，
+而是<b>通过梯度下降学出来的</b>。</p>
+
+<h3>6.2 前向传播代码</h3>
+
+<pre><code>import torch
+import torch.nn.functional as F
+
+# 初始化参数
+g = torch.Generator().manual_seed(2147483647)
+W = torch.randn((27, 27), generator=g, requires_grad=True)
+
+# === Forward Pass ===
+xenc = F.one_hot(xs, num_classes=27).float()  # (N, 27)
+logits = xenc @ W                              # (N, 27)  == log-counts
+counts = logits.exp()                          # 等价于 N 矩阵
+probs = counts / counts.sum(1, keepdim=True)   # softmax: (N, 27)
+</code></pre>
+
+<div class="infra-callout">
+  <div class="callout-title">🔍 关键 insight（Karpathy 反复强调的）</div>
+  <ul style="margin:6px 0">
+    <li><code>xenc @ W</code> 由于 <code>xenc</code> 是 one-hot，
+        其结果等价于「<b>从 W 中取出第 x 行</b>」。</li>
+    <li>因此可以把 <code>W[i, :]</code> 理解为「字符 i 后面接各个字符的 log-counts（对数频次）」。</li>
+    <li><code>exp</code> 把 log-counts 还原成 counts；<code>除以 sum</code> 就是按行归一化得到概率。</li>
+    <li>整个网络就是一个把"频次矩阵 N"用"可学习的对数空间参数 W"重新参数化的过程。</li>
+  </ul>
+</div>
+
+<h3>6.3 损失函数：负对数似然</h3>
+
+<pre><code># 取出真实标签位置上的概率
+loss = -probs[torch.arange(N), ys].log().mean()
+</code></pre>
+
+<p>等价于 <code>F.cross_entropy(logits, ys)</code>（数值上更稳）。
+Karpathy 在视频里特意先手写一遍，让你彻底看清 "cross_entropy = softmax + log + 取标签位置 + 取负 + 求均值"。</p>
+
+<h3>6.4 反向传播 & 梯度下降</h3>
+
+<pre><code>num_steps = 100
+lr = 50  # bigram 这种小网络可以用很大的 lr
+
+for k in range(num_steps):
+    # ---- forward ----
+    xenc = F.one_hot(xs, num_classes=27).float()
+    logits = xenc @ W
+    counts = logits.exp()
+    probs = counts / counts.sum(1, keepdim=True)
+    loss = -probs[torch.arange(len(xs)), ys].log().mean() \
+           + 0.01 * (W**2).mean()           # L2 正则（= 平滑）
+
+    # ---- backward ----
+    W.grad = None
+    loss.backward()
+
+    # ---- update ----
+    W.data += -lr * W.grad
+
+    if k % 10 == 0:
+        print(f'step {k:3d}  loss = {loss.item():.4f}')
+</code></pre>
+
+<p>训练几十步之后，loss 会收敛到 ≈ 2.47，<b>几乎等于</b>纯计数法的 2.4543 —— 这就是 "two methods produce the same model" 的实证。</p>
+
+<div class="good-callout">
+  <b>那为什么我们还要绕一圈用神经网络？</b><br>
+  因为<b>计数法不可扩展</b>：
+  <ul style="margin:6px 0">
+    <li>如果上下文是 2 个字符 → 矩阵变 27² × 27 = 19,683 行 → 可接受</li>
+    <li>3 个字符 → 27³ × 27 = 531,441 行 → 已经很糟</li>
+    <li>10 个字符 → 27¹⁰ × 27 ≈ 5×10¹⁵ 行 → 完全不可能</li>
+  </ul>
+  而<b>神经网络的参数量可以独立于上下文长度</b>（用 embedding + MLP/Transformer 压缩信息），
+  这就是从 Bigram → MLP → Transformer 的根本动机。
+</div>
+
+<!-- ============================================== -->
+<h2 id="sec7">7. 两种方法的对照</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>维度</th>
+      <th>计数法</th>
+      <th>神经网络法</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>核心数据结构</td><td>频次矩阵 N (27×27)</td><td>权重矩阵 W (27×27)</td></tr>
+    <tr><td>"训练"方式</td><td>遍历一次数据，数数</td><td>梯度下降迭代</td></tr>
+    <tr><td>得到概率</td><td>N 按行归一化</td><td>softmax(W[x])</td></tr>
+    <tr><td>正则化方式</td><td>加法平滑 N+k</td><td>L2: λ·mean(W²)</td></tr>
+    <tr><td>训练集 NLL</td><td>≈ 2.4543</td><td>≈ 2.4700</td></tr>
+    <tr><td>可扩展性</td><td>❌ 上下文一长就爆炸</td><td>✅ 参数量可解耦</td></tr>
+    <tr><td>对应的 ML 范式</td><td>非参数统计</td><td>参数化模型 + 优化</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================== -->
+<h2 id="sec8">8. 为什么这一集是 Transformer 的起点</h2>
+
+<p>Karpathy 设计这一集的真正目的，是让你<b>把后面所有复杂模型套到同一个心智模型上</b>：</p>
+
+<div class="ascii">     输入 token 序列 ──► [某种 architecture] ──► logits ──► softmax ──► probs
+                              ↑                                                ↑
+                       Bigram:  W                                          NLL loss
+                       MLP   :  embedding + hidden + W
+                       RNN   :  embedding + 循环状态 + W
+                       Transformer: embedding + self-attention 堆叠 + W</div>
+
+<p>整个 Zero to Hero 系列的脉络是：<b>「Architecture 在变，目标/损失/采样/评估都不变」</b>。
+这正是工程师能稳稳跟上后面集数的关键 —— 因为「外壳」已经在这一集打牢了。</p>
+
+<!-- ============================================== -->
+<h2 id="sec9">9. 给 AI Infra / Kafka 背景读者的视角</h2>
+
+<div class="infra-callout">
+<div class="callout-title">🛠 从 Infra 视角看这一集，关注什么</div>
+<ol>
+  <li><b>Tensor shape 的肌肉记忆</b>：<code>xs (N,)</code>、<code>xenc (N, 27)</code>、
+      <code>W (27, 27)</code>、<code>logits (N, 27)</code>、<code>probs (N, 27)</code>。
+      <u>每一步都要能默写出 shape 变化</u> —— 这是后面读 vLLM、Megatron 源码的入场券。</li>
+
+  <li><b><code>xenc @ W</code> 在 one-hot 下退化成查表</b>。
+      这就是 <code>nn.Embedding</code> 的本质 —— 不是"魔法"，就是"<u>用整数索引代替 one-hot + matmul</u>"
+      的<b>访存优化</b>。从 Infra 视角看，这是一次从 "稀疏 matmul" 到 "gather" 的算子重写。</li>
+
+  <li><b>正则项 = 平滑</b>：<code>0.01 * (W**2).mean()</code> 在数学上等价于给 N 加常数。
+      ML 里的"两种世界观"在工程实现上其实是同一份代码的两种解释。</li>
+
+  <li><b>采样是顺序的、batch 1 的</b>：每生成一个字符要 forward 一次。
+      到 GPT 推理时，这就是 <b>decode 阶段</b> —— autoregressive、IO bound、KV Cache 的用武之地。
+      你现在写的这个<code>while ix != 0: forward; sample</code> 循环，本质就是 vLLM 的 decode loop 最简化版。</li>
+
+  <li><b>vocab_size=27</b> 很小，所以 softmax 没成本；
+      但在真实 LLM 中 vocab_size = 32k~150k，<code>logits.exp()</code>、按行求和、
+      <code>cross_entropy</code> 都会成为显存与算力大头，催生了诸如 Tied Embedding、
+      Fused CrossEntropy 等优化点。</li>
+</ol>
+</div>
+
+<!-- ============================================== -->
+<h2 id="sec10">10. 一份可直接运行的完整代码</h2>
+
+<p>下面是把上面所有内容串起来的最小可运行脚本。把 names.txt 放到同目录即可
+（数据集来自 <a href="https://github.com/karpathy/makemore/blob/master/names.txt" target="_blank">karpathy/makemore</a>）。</p>
+
+<pre><code>"""
+makemore Ep.1  —— Bigram 字符级语言模型
+两种方法对照实现：计数法 vs 神经网络法
+"""
+import torch
+import torch.nn.functional as F
+
+# ============ 1. 读数据 ============
+words = open('names.txt').read().splitlines()
+print(f'#words = {len(words)},  e.g. {words[:5]}')
+
+# ============ 2. 字符表 ============
+chars = sorted(set(''.join(words)))
+stoi = {s: i + 1 for i, s in enumerate(chars)}
+stoi['.'] = 0
+itos = {i: s for s, i in stoi.items()}
+V = len(stoi)
+
+# ============ 3. 构建训练样本 ============
+xs, ys = [], []
+for w in words:
+    chs = ['.'] + list(w) + ['.']
+    for a, b in zip(chs, chs[1:]):
+        xs.append(stoi[a])
+        ys.append(stoi[b])
+xs = torch.tensor(xs)
+ys = torch.tensor(ys)
+N_total = xs.nelement()
+print(f'#bigrams = {N_total}')
+
+# ====================================================
+# 方法一：计数法
+# ====================================================
+N = torch.zeros((V, V), dtype=torch.int32)
+for x, y in zip(xs.tolist(), ys.tolist()):
+    N[x, y] += 1
+
+P = (N + 1).float()                       # 加 1 平滑
+P /= P.sum(dim=1, keepdim=True)
+
+# 评估 NLL
+log_likelihood = 0.0
+for x, y in zip(xs.tolist(), ys.tolist()):
+    log_likelihood += torch.log(P[x, y])
+nll = -log_likelihood / N_total
+print(f'[Counting] NLL = {nll.item():.4f}')
+
+# 采样
+g = torch.Generator().manual_seed(2147483647)
+print('[Counting] Samples:')
+for _ in range(10):
+    out, ix = [], 0
+    while True:
+        ix = torch.multinomial(P[ix], 1, replacement=True, generator=g).item()
+        if ix == 0:
+            break
+        out.append(itos[ix])
+    print('  ', ''.join(out))
+
+# ====================================================
+# 方法二：神经网络法
+# ====================================================
+g = torch.Generator().manual_seed(2147483647)
+W = torch.randn((V, V), generator=g, requires_grad=True)
+
+for step in range(200):
+    xenc = F.one_hot(xs, num_classes=V).float()
+    logits = xenc @ W
+    # 等价于 F.cross_entropy(logits, ys)，这里手写为了暴露细节
+    counts = logits.exp()
+    probs = counts / counts.sum(1, keepdim=True)
+    loss = -probs[torch.arange(N_total), ys].log().mean() \
+           + 0.01 * (W ** 2).mean()
+
+    W.grad = None
+    loss.backward()
+    W.data += -50 * W.grad
+
+    if step % 20 == 0:
+        print(f'  step {step:3d}  loss = {loss.item():.4f}')
+
+print(f'[NeuralNet] NLL = {loss.item():.4f}')
+
+# 神经网络采样
+g = torch.Generator().manual_seed(2147483647)
+print('[NeuralNet] Samples:')
+for _ in range(10):
+    out, ix = [], 0
+    while True:
+        xenc = F.one_hot(torch.tensor([ix]), num_classes=V).float()
+        logits = xenc @ W
+        probs = F.softmax(logits, dim=1)
+        ix = torch.multinomial(probs, 1, generator=g).item()
+        if ix == 0:
+            break
+        out.append(itos[ix])
+    print('  ', ''.join(out))
+</code></pre>
+
+<div class="good-callout">
+  <b>预期输出</b>：两种方法的 NLL 都在 <b>2.45 ~ 2.47</b> 之间，
+  生成的"名字"在两种方法下也非常相似（如 <code>mor, axx, minaymoryles, ...</code>）。
+  这就实证了"两种方法等价"。
+</div>
+
+<hr>
+
+<h2 id="summary">📌 一句话总结</h2>
+
+<blockquote>
+  <b>Bigram 模型用 27×27 的小矩阵讲清了语言模型的全部骨架：</b><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;数据 → 转 id → 前向 → softmax → 概率 → NLL loss → 反传 → 更新 → 采样。<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;后面 4 集（MLP / WaveNet / Transformer）唯一在变的是<b>中间那个箱子</b>，
+  其余的"管道"完全一致。
+</blockquote>
+
+<h3>🔭 下一步</h3>
+<ul>
+  <li>跑通本文末尾完整代码，对照视频复盘每行 shape</li>
+  <li>把 1-gram 扩展到 2-gram（统计 (a,b)→c），观察参数量爆炸</li>
+  <li>进入 Ep.2：用 MLP 取代矩阵 W，第一次引入 <b>character embedding</b></li>
+</ul>
+
+<hr>
+
+<h2 id="resources">📦 Karpathy 官方代码 & 资源</h2>
+
+<p>Karpathy 把整个 "Neural Networks: Zero to Hero" 系列的所有 notebook 和数据集都放在了同一个公开仓库 <a href="https://github.com/karpathy/nn-zero-to-hero" target="_blank">karpathy/nn-zero-to-hero</a> 里。</p>
+
+<h3>📓 第 1 集对应资料</h3>
+<table>
+  <thead><tr><th>资源</th><th>链接</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>📺 YouTube 视频</td>
+      <td><a href="https://www.youtube.com/watch?v=PaCmpygFfXo" target="_blank">The spelled-out intro to language modeling: building makemore</a></td>
+    </tr>
+    <tr>
+      <td>📓 GitHub Notebook</td>
+      <td><a href="https://github.com/karpathy/nn-zero-to-hero/blob/master/lectures/makemore/makemore_part1_bigrams.ipynb" target="_blank">makemore_part1_bigrams.ipynb</a></td>
+    </tr>
+    <tr>
+      <td>🚀 Colab 一键打开</td>
+      <td><a href="https://colab.research.google.com/github/karpathy/nn-zero-to-hero/blob/master/lectures/makemore/makemore_part1_bigrams.ipynb" target="_blank">在 Colab 中运行（免安装环境）</a></td>
+    </tr>
+    <tr>
+      <td>📂 makemore 仓库</td>
+      <td><a href="https://github.com/karpathy/makemore" target="_blank">karpathy/makemore</a>（独立项目仓库，包含 names.txt）</td>
+    </tr>
+    <tr>
+      <td>📄 数据集 names.txt</td>
+      <td><a href="https://raw.githubusercontent.com/karpathy/makemore/master/names.txt" target="_blank">直接下载</a>（32,033 个英文名字）</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <div class="callout-title">💡 推荐使用方式</div>
+  <b>如果你只是想跑代码看效果</b>：点 Colab 链接，免费 GPU，开箱即用。<br>
+  <b>如果你想深入跟着做</b>：把 notebook 下载到本地 Jupyter，每一段对着视频暂停 + 自己默写 shape，效果最好。<br>
+  <b>本文第 10 节的精简代码</b>已经把视频里所有关键步骤浓缩了，可以作为复习时的速查表。
+</div>
+
+</body>
+</html>
