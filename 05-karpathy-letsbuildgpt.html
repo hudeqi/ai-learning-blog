@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Karpathy 第 5 集 · Let's build GPT：从零搭建 Transformer — 学习笔记</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] }
+  };
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<style>
+  :root {
+    --bg: #fbfaf7;
+    --fg: #1f2328;
+    --muted: #57606a;
+    --accent: #0969da;
+    --accent2: #8250df;
+    --code-bg: #f6f8fa;
+    --code-fg: #24292f;
+    --border: #d0d7de;
+    --callout-bg: #fff8c5;
+    --callout-border: #d4a72c;
+    --infra-bg: #ddf4ff;
+    --infra-border: #54aeff;
+    --good-bg: #dafbe1;
+    --good-border: #4ac26b;
+    --qa-bg: #fbefff;
+    --qa-border: #a371f7;
+    --warn-bg: #ffebe9;
+    --warn-border: #cf222e;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    line-height: 1.78;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 44px 28px 96px;
+    font-size: 16px;
+  }
+  h1 {
+    font-size: 30px;
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 14px;
+    margin-bottom: 6px;
+    line-height: 1.35;
+  }
+  .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 8px; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 36px; }
+  h2 {
+    font-size: 23px;
+    margin-top: 52px;
+    border-left: 4px solid var(--accent);
+    padding-left: 12px;
+  }
+  h3 { font-size: 18px; margin-top: 30px; color: var(--accent2); }
+  h4 { font-size: 16px; margin-top: 22px; color: var(--fg); }
+  p { margin: 14px 0; }
+  code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 14px;
+    color: #cf222e;
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-size: 13.5px;
+    line-height: 1.6;
+  }
+  pre code { background: transparent; padding: 0; color: inherit; font-size: 13.5px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  blockquote {
+    border-left: 4px solid var(--border);
+    color: var(--muted);
+    padding: 4px 14px;
+    margin: 18px 0;
+    background: #fff;
+  }
+  .callout {
+    background: var(--callout-bg);
+    border-left: 4px solid var(--callout-border);
+    padding: 12px 16px; margin: 18px 0; border-radius: 4px;
+  }
+  .callout-title { font-weight: 600; margin-bottom: 4px; }
+  .infra-callout {
+    background: var(--infra-bg);
+    border-left: 4px solid var(--infra-border);
+    padding: 14px 18px; margin: 22px 0; border-radius: 4px;
+  }
+  .infra-callout .callout-title { color: #0a3069; }
+  .good-callout {
+    background: var(--good-bg);
+    border-left: 4px solid var(--good-border);
+    padding: 12px 16px; margin: 18px 0; border-radius: 4px;
+  }
+  .warn-callout {
+    background: var(--warn-bg);
+    border-left: 4px solid var(--warn-border);
+    padding: 12px 16px; margin: 18px 0; border-radius: 4px;
+  }
+  .qa-callout {
+    background: var(--qa-bg);
+    border-left: 4px solid var(--qa-border);
+    padding: 14px 18px; margin: 22px 0; border-radius: 4px;
+  }
+  .qa-callout .qa-q { font-weight: 600; color: #6f42c1; margin-bottom: 8px; }
+  table { border-collapse: collapse; width: 100%; margin: 18px 0; font-size: 14.5px; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: #f6f8fa; font-weight: 600; }
+  ul, ol { padding-left: 28px; }
+  li { margin: 6px 0; }
+  .toc {
+    background: #fff; border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px 22px; margin: 28px 0; font-size: 14.5px;
+  }
+  .toc-title { font-weight: 600; margin-bottom: 6px; color: var(--muted); font-size: 13px; letter-spacing: 0.5px; }
+  .toc ol { padding-left: 22px; margin: 6px 0; }
+  .tag {
+    display: inline-block; background: #f6f8fa; border: 1px solid var(--border);
+    border-radius: 12px; padding: 1px 10px; font-size: 12px; color: var(--muted); margin-right: 6px;
+  }
+  hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+  .ascii {
+    font-family: "SF Mono", Menlo, Consolas, monospace; white-space: pre;
+    background: #fff; border: 1px dashed var(--border); padding: 14px;
+    border-radius: 6px; font-size: 13px; line-height: 1.5; overflow-x: auto;
+  }
+</style>
+</head>
+<body>
+
+<h1>Karpathy 第 5 集 · Let's build GPT：从零搭建 Transformer</h1>
+<div class="subtitle">— 整个 Zero to Hero 系列的高潮：把 self-attention 拼成一个完整的 GPT</div>
+<div class="meta">
+  <span class="tag">学习笔记</span>
+  <span class="tag">Karpathy Zero to Hero</span>
+  <span class="tag">Transformer</span>
+  <span class="tag">Self-Attention</span>
+  <span class="tag">GPT</span>
+  <span class="tag">nanoGPT</span>
+</div>
+
+<div class="toc">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#sec1">1. 这一集要造什么</a></li>
+    <li><a href="#sec2">2. 数据加载：get_batch 与训练目标</a></li>
+    <li><a href="#sec3">3. 从 Bigram 起手（呼应 Ep.1）</a></li>
+    <li><a href="#sec4">4. self-attention 的核心：Q / K / V</a></li>
+    <li><a href="#sec5">5. 缩放点积与 causal mask</a></li>
+    <li><a href="#sec6">6. Multi-Head Attention</a></li>
+    <li><a href="#sec7">7. FeedForward：每个 token 的内部加工</a></li>
+    <li><a href="#sec8">8. 残差连接 + LayerNorm：让深层训得动</a></li>
+    <li><a href="#sec9">9. lm_head 与完整前向</a></li>
+    <li><a href="#sec10">10. generate()：自回归生成循环</a></li>
+    <li><a href="#sec11">11. Infra 视角：从这一集直通 vLLM</a></li>
+    <li><a href="#sec12">12. 可运行的完整代码（gpt.py）</a></li>
+    <li><a href="#sec13">13. ⭐ 学习过程高频卡点答疑（14 个 Q）</a></li>
+    <li><a href="#sec14">14. Karpathy 官方代码 &amp; 资源</a></li>
+  </ol>
+</div>
+
+<!-- ===================== -->
+<h2 id="sec1">1. 这一集要造什么</h2>
+
+<p>这一集从零搭一个 <b>decoder-only Transformer（GPT）</b>，用莎士比亚文本训练一个字符级语言模型，能生成"莎士比亚风格"的文本。</p>
+
+<p>它把前几集的所有积累汇总，并引入 Transformer 的全部核心组件：</p>
+
+<table>
+  <thead><tr><th>组件</th><th>作用</th><th>来源</th></tr></thead>
+  <tbody>
+    <tr><td>token + position embedding</td><td>离散 token → 向量 + 位置信息</td><td>Ep.2 embedding 延伸</td></tr>
+    <tr><td>self-attention</td><td>token 之间交流信息</td><td>本集核心 ⭐</td></tr>
+    <tr><td>multi-head</td><td>并行多个注意力子空间</td><td>本集</td></tr>
+    <tr><td>FeedForward</td><td>每个 token 内部非线性加工</td><td>本集</td></tr>
+    <tr><td>残差 + LayerNorm</td><td>让深层网络训得动</td><td>Ep.3 归一化思想延伸</td></tr>
+    <tr><td>lm_head</td><td>向量 → 下一个 token 的分数</td><td>本集</td></tr>
+    <tr><td>generate()</td><td>自回归生成</td><td>Ep.1 采样思想延伸</td></tr>
+  </tbody>
+</table>
+
+<!-- ===================== -->
+<h2 id="sec2">2. 数据加载：get_batch 与训练目标</h2>
+
+<pre><code>batch_size = 4   # 4 个独立序列
+block_size = 8   # 每个序列长度（上下文窗口）
+
+def get_batch(split):
+    data = train_data if split == 'train' else val_data
+    ix = torch.randint(len(data) - block_size, (batch_size,))   # 随机抽 4 个起点
+    x = torch.stack([data[i:i+block_size]     for i in ix])      # (4, 8)
+    y = torch.stack([data[i+1:i+block_size+1] for i in ix])      # (4, 8) 右移一位
+    return x, y
+</code></pre>
+
+<p><b>核心：y 是 x 整体右移一位</b>。对 x 的每个位置，y 给出"下一个 token 应该是什么"。</p>
+
+<div class="ascii">x = [11,  5, 33,  9,  2, 47, 18,  4]
+y = [ 5, 33,  9,  2, 47, 18,  4, 31]
+
+位置0: 看到[11]            → 预测 5
+位置1: 看到[11,5]          → 预测 33
+位置2: 看到[11,5,33]       → 预测 9
+...
+位置7: 看到全部8个         → 预测 31</div>
+
+<div class="good-callout">
+  <b>关键洞察</b>：一个长度 8 的样本 = <b>8 个并发训练目标</b>。
+  一个 batch (4, 8) = <b>4×8 = 32 个并发训练样本</b>。
+  靠 Transformer 的 causal mask（每个位置只看自己和之前）一次 forward 完成全部目标 —— 这是 Transformer 训练效率的核心 trick。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec3">3. 从 Bigram 起手（呼应 Ep.1）</h2>
+
+<p>Karpathy 故意先用最简单的 Bigram 模型起手（和 makemore Ep.1 一样），然后逐步升级到 Transformer：</p>
+
+<pre><code>class BigramLanguageModel(nn.Module):
+    def __init__(self, vocab_size):
+        super().__init__()
+        # 直接用 embedding 当 logits（vocab_size × vocab_size）
+        self.token_embedding_table = nn.Embedding(vocab_size, vocab_size)
+    def forward(self, idx, targets=None):
+        logits = self.token_embedding_table(idx)   # (B, T, vocab_size)
+        ...
+</code></pre>
+
+<div class="callout">
+  <div class="callout-title">💡 设计意图</div>
+  Karpathy 想让你看到：<b>训练循环、loss、采样的代码完全不变，只把"模型类"从 Bigram 换成 Transformer 就是 GPT</b>。
+  "架构在变，训练/损失/采样的骨架不变" —— 这是贯穿整个系列的主线。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec4">4. self-attention 的核心：Q / K / V</h2>
+
+<p>每个 token 的输入向量 x，经过三个<b>不同的 Linear</b>，投影出三个角色：</p>
+
+<table>
+  <thead><tr><th>角色</th><th>含义</th><th>类比（图书馆检索）</th></tr></thead>
+  <tbody>
+    <tr><td><b>Query (Q)</b></td><td>我想找什么</td><td>检索需求</td></tr>
+    <tr><td><b>Key (K)</b></td><td>我是什么（被匹配的标签）</td><td>书的标签</td></tr>
+    <tr><td><b>Value (V)</b></td><td>我的实际内容（被加权收集）</td><td>书的内容</td></tr>
+  </tbody>
+</table>
+
+<pre><code>k = key(x)     # (B, T, head_size)
+q = query(x)   # (B, T, head_size)
+v = value(x)   # (B, T, head_size)
+
+wei = q @ k.transpose(-2, -1)   # (B, T, T)  注意力分数
+# ... scale + mask + softmax ...
+out = wei @ v                    # (B, T, head_size)  加权收集
+</code></pre>
+
+<div class="good-callout">
+  <b>流程</b>：用 Q·K 算"该关注谁、多少"（路由/权重）→ 用 V 提供"关注到的内容"（货物）→ 加权求和。<br>
+  <b>Q·K 是导航，V 是货物，缺一不可。</b>输出 out 是"新表示"，<b>不是 V</b>。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec5">5. 缩放点积与 causal mask</h2>
+
+<h3>5.1 缩放 1/√head_size</h3>
+
+<pre><code>wei = q @ k.transpose(-2, -1) * head_size**-0.5
+</code></pre>
+
+<p>q·k 是 head_size 个乘积相加，方差 = head_size。点积太大会让 softmax 过于尖锐（接近 one-hot）→ 退化成硬选择 + 梯度消失。除以 √head_size 把方差拉回 1。</p>
+
+<div class="callout">
+  <div class="callout-title">💡 和 Ep.3 同一招</div>
+  这和 Ep.3 Kaiming 初始化是同一个数学思想：<b>多项相加导致方差膨胀 → 除以 √项数 拉回来</b>。
+</div>
+
+<h3>5.2 causal mask</h3>
+
+<pre><code>tril = torch.tril(torch.ones(T, T))
+wei = wei.masked_fill(tril == 0, float('-inf'))   # 未来位置设 -inf
+wei = F.softmax(wei, dim=-1)                        # -inf 经 softmax 变 0
+</code></pre>
+
+<p>下三角（含对角线）保留，上三角设 <code>-inf</code>。softmax 后未来位置权重为 0 → 每个 token 只能看到"自己和之前"，这是 GPT（decoder-only）的因果约束。</p>
+
+<!-- ===================== -->
+<h2 id="sec6">6. Multi-Head Attention</h2>
+
+<pre><code>head_size = n_embd // num_heads   # 例如 32 // 4 = 8
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, num_heads, head_size):
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.proj = nn.Linear(n_embd, n_embd)
+    def forward(self, x):
+        out = torch.cat([h(x) for h in self.heads], dim=-1)  # 4×(B,T,8) → (B,T,32)
+        out = self.proj(out)                                  # 让各头信息融合
+        return out
+</code></pre>
+
+<p><b>把 n_embd 切成 num_heads 份，每个 head 学一种关注模式（语法/指代/相邻...），拼接后恢复 n_embd。</b>计算量与单头基本相同，但表达能力更丰富。</p>
+
+<!-- ===================== -->
+<h2 id="sec7">7. FeedForward：每个 token 的内部加工</h2>
+
+<pre><code>class FeedForward(nn.Module):
+    def __init__(self, n_embd):
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, 4 * n_embd),   # 升维 4 倍
+            nn.ReLU(),                        # 非线性
+            nn.Linear(4 * n_embd, n_embd),   # 降回
+            nn.Dropout(dropout),
+        )
+</code></pre>
+
+<p><b>attention 负责 token 间"交流"（横向），FeedForward 负责每个 token 内部"加工"（纵向）。</b> attention 主体是线性的（加权求和），FFN 的 ReLU 引入非线性，让模型能对收集来的信息做深度加工。升维 4 倍是给非线性变换更大的空间。</p>
+
+<!-- ===================== -->
+<h2 id="sec8">8. 残差连接 + LayerNorm：让深层训得动</h2>
+
+<pre><code>class Block(nn.Module):
+    def forward(self, x):
+        x = x + self.sa(self.ln1(x))      # 残差 + Pre-LN
+        x = x + self.ffwd(self.ln2(x))    # 残差 + Pre-LN
+        return x
+</code></pre>
+
+<h3>8.1 残差 x = x + f(x)</h3>
+
+<p>反向传播时 <code>∂out/∂x = 1 + ∂f/∂x</code>，那个 <b>"+1"</b> 给梯度一条不衰减的直通高速路，解决<b>反向传播</b>的梯度消失。让 Transformer 能堆几十上百层。</p>
+
+<h3>8.2 LayerNorm</h3>
+
+<p>每个 token 在自己的特征维度上独立归一化（与 batch 维度无关）。</p>
+
+<table>
+  <thead><tr><th></th><th>BatchNorm</th><th>LayerNorm</th></tr></thead>
+  <tbody>
+    <tr><td>归一化方向</td><td>跨样本（batch 维）</td><td>每个 token 内部（特征维）</td></tr>
+    <tr><td>序列任务</td><td>样本长度不一，统计不稳 ✗</td><td>与 batch 无关 ✓</td></tr>
+  </tbody>
+</table>
+
+<div class="infra-callout">
+  <div class="callout-title">⚙️ 有了残差 + LayerNorm，Ep.3 的 gain 还要吗</div>
+  残差不替代 gain（一个管梯度消失、一个管激活分布），但 <b>LayerNorm 替代了 gain 的大部分作用</b>（每层强制标准化，不再需要精确的 gain/√fan_in）。
+  不过"用缩放控制方差"的思想没消失，迁移到了 <b>注意力的 /√head_size</b> 和 <b>残差累积的 /√(2·n_layer)</b>。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec9">9. lm_head 与完整前向</h2>
+
+<pre><code>class GPTLanguageModel(nn.Module):
+    def __init__(self):
+        self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
+        self.position_embedding_table = nn.Embedding(block_size, n_embd)
+        self.blocks = nn.Sequential(*[Block(n_embd, n_head) for _ in range(n_layer)])
+        self.ln_f = nn.LayerNorm(n_embd)
+        self.lm_head = nn.Linear(n_embd, vocab_size)   # ← 语义向量 → token 分数
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+        tok_emb = self.token_embedding_table(idx)            # (B,T,n_embd)
+        pos_emb = self.position_embedding_table(torch.arange(T))  # (T,n_embd)
+        x = tok_emb + pos_emb                                # (B,T,n_embd)
+        x = self.blocks(x)                                   # (B,T,n_embd)
+        x = self.ln_f(x)                                     # (B,T,n_embd)
+        logits = self.lm_head(x)                             # (B,T,vocab_size)
+        ...
+</code></pre>
+
+<p><b>lm_head = Language Modeling Head</b>，一个 Linear，把每个位置的语义向量映射成 vocab_size 个分数。它和入口的 token embedding 是镜像操作（一个 vocab→embd，一个 embd→vocab）。</p>
+
+<!-- ===================== -->
+<h2 id="sec10">10. generate()：自回归生成循环</h2>
+
+<pre><code>def generate(self, idx, max_new_tokens):
+    for _ in range(max_new_tokens):
+        idx_cond = idx[:, -block_size:]              # 1. 截断上下文
+        logits, loss = self(idx_cond)                # 2. 前向
+        logits = logits[:, -1, :]                    # 3. 取最后一个位置
+        probs = F.softmax(logits, dim=-1)            # 4. 转概率
+        idx_next = torch.multinomial(probs, 1)       # 5. 采样
+        idx = torch.cat((idx, idx_next), dim=1)      # 6. 拼接
+    return idx
+</code></pre>
+
+<p><b>自回归生成</b>：一次生成一个 token，加回输入，再生成下一个，循环往复。和 makemore Ep.1 的采样循环是同一个骨架，只是用 Transformer 前向代替查表。</p>
+
+<div class="infra-callout">
+  <div class="callout-title">🛠 这就是 LLM 推理（decode）的最简原型</div>
+  这个循环有个性能问题：<b>每轮把整个序列重新前向一遍（O(N²) 浪费）</b>，因为历史 token 的 K、V 在之前轮次已经算过了。<br>
+  vLLM 的核心工作就是解决它：<b>KV Cache</b>（避免重算）+ <b>PagedAttention</b>（分页管理 KV 显存）+ <b>Continuous Batching</b>（多请求动态批处理）。<br>
+  <b>Ep.5 的 generate + KV Cache + 显存管理 + 批处理调度 = vLLM。</b>
+</div>
+
+<!-- ===================== -->
+<h2 id="sec11">11. Infra 视角：从这一集直通 vLLM</h2>
+
+<div class="infra-callout">
+<div class="callout-title">🛠 这一集对推理方向转型者的价值</div>
+<ol>
+  <li><b>K、V 就是 KV Cache 缓存的东西</b>：decode 时历史 token 的 K、V 反复被未来 token 用到，所以缓存；Q 用完即弃不缓存（这就是"为什么叫 KV Cache 不叫 QKV Cache"）。</li>
+  <li><b>causal mask 是 KV Cache 成立的前提</b>：因为每个 token 只依赖之前的 token，历史的 K/V 才不会变，才能缓存复用。</li>
+  <li><b>scaled dot-product 的缩放</b>：FlashAttention 把 1/√head_size 融合进 kernel；fp16 下还防数值溢出。</li>
+  <li><b>FFN 占参数大头</b>：约 2/3 参数在 FFN。推理量化、MoE 都盯着 FFN。</li>
+  <li><b>generate 的采样参数</b>：temperature / top-k / top-p 就是你调 LLM API 的那些参数，对应 vLLM 的 SamplingParams。</li>
+  <li><b>位置编码限制上下文长度</b>：generate 里 <code>idx[:, -block_size:]</code> 的截断，对应真实 LLM 的"上下文窗口"限制，长上下文优化（RoPE/ALiBi）是热点。</li>
+</ol>
+</div>
+
+<!-- ===================== -->
+<h2 id="sec12">12. 可运行的完整代码（gpt.py）</h2>
+
+<p>这是 Karpathy Ep.5 的完整代码（约 200 行搭一个 GPT）。需要 <code>input.txt</code>（tiny shakespeare）。</p>
+
+<pre><code>import torch
+import torch.nn as nn
+from torch.nn import functional as F
+
+# ---- 超参数 ----
+batch_size = 64
+block_size = 256
+max_iters = 5000
+eval_interval = 500
+learning_rate = 3e-4
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+eval_iters = 200
+n_embd = 384
+n_head = 6
+n_layer = 6
+dropout = 0.2
+torch.manual_seed(1337)
+
+# ---- 数据 ----
+with open('input.txt', 'r', encoding='utf-8') as f:
+    text = f.read()
+chars = sorted(list(set(text)))
+vocab_size = len(chars)
+stoi = {ch: i for i, ch in enumerate(chars)}
+itos = {i: ch for i, ch in enumerate(chars)}
+encode = lambda s: [stoi[c] for c in s]
+decode = lambda l: ''.join([itos[i] for i in l])
+
+data = torch.tensor(encode(text), dtype=torch.long)
+n = int(0.9 * len(data))
+train_data = data[:n]
+val_data = data[n:]
+
+def get_batch(split):
+    data = train_data if split == 'train' else val_data
+    ix = torch.randint(len(data) - block_size, (batch_size,))
+    x = torch.stack([data[i:i+block_size] for i in ix])
+    y = torch.stack([data[i+1:i+block_size+1] for i in ix])
+    return x.to(device), y.to(device)
+
+@torch.no_grad()
+def estimate_loss():
+    out = {}
+    model.eval()
+    for split in ['train', 'val']:
+        losses = torch.zeros(eval_iters)
+        for k in range(eval_iters):
+            X, Y = get_batch(split)
+            logits, loss = model(X, Y)
+            losses[k] = loss.item()
+        out[split] = losses.mean()
+    model.train()
+    return out
+
+# ---- 模型组件 ----
+class Head(nn.Module):
+    def __init__(self, head_size):
+        super().__init__()
+        self.key   = nn.Linear(n_embd, head_size, bias=False)
+        self.query = nn.Linear(n_embd, head_size, bias=False)
+        self.value = nn.Linear(n_embd, head_size, bias=False)
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        B, T, C = x.shape
+        k = self.key(x)
+        q = self.query(x)
+        wei = q @ k.transpose(-2, -1) * k.shape[-1]**-0.5
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+        wei = F.softmax(wei, dim=-1)
+        wei = self.dropout(wei)
+        v = self.value(x)
+        out = wei @ v
+        return out
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, num_heads, head_size):
+        super().__init__()
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.proj = nn.Linear(head_size * num_heads, n_embd)
+        self.dropout = nn.Dropout(dropout)
+    def forward(self, x):
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        out = self.dropout(self.proj(out))
+        return out
+
+class FeedForward(nn.Module):
+    def __init__(self, n_embd):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, 4 * n_embd),
+            nn.ReLU(),
+            nn.Linear(4 * n_embd, n_embd),
+            nn.Dropout(dropout),
+        )
+    def forward(self, x):
+        return self.net(x)
+
+class Block(nn.Module):
+    def __init__(self, n_embd, n_head):
+        super().__init__()
+        head_size = n_embd // n_head
+        self.sa = MultiHeadAttention(n_head, head_size)
+        self.ffwd = FeedForward(n_embd)
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
+    def forward(self, x):
+        x = x + self.sa(self.ln1(x))
+        x = x + self.ffwd(self.ln2(x))
+        return x
+
+class GPTLanguageModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
+        self.position_embedding_table = nn.Embedding(block_size, n_embd)
+        self.blocks = nn.Sequential(*[Block(n_embd, n_head) for _ in range(n_layer)])
+        self.ln_f = nn.LayerNorm(n_embd)
+        self.lm_head = nn.Linear(n_embd, vocab_size)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+        tok_emb = self.token_embedding_table(idx)
+        pos_emb = self.position_embedding_table(torch.arange(T, device=device))
+        x = tok_emb + pos_emb
+        x = self.blocks(x)
+        x = self.ln_f(x)
+        logits = self.lm_head(x)
+        if targets is None:
+            loss = None
+        else:
+            B, T, C = logits.shape
+            logits = logits.view(B*T, C)
+            targets = targets.view(B*T)
+            loss = F.cross_entropy(logits, targets)
+        return logits, loss
+
+    def generate(self, idx, max_new_tokens):
+        for _ in range(max_new_tokens):
+            idx_cond = idx[:, -block_size:]
+            logits, loss = self(idx_cond)
+            logits = logits[:, -1, :]
+            probs = F.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+            idx = torch.cat((idx, idx_next), dim=1)
+        return idx
+
+# ---- 训练 ----
+model = GPTLanguageModel().to(device)
+optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+
+for iter in range(max_iters):
+    if iter % eval_interval == 0:
+        losses = estimate_loss()
+        print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+    xb, yb = get_batch('train')
+    logits, loss = model(xb, yb)
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    optimizer.step()
+
+# ---- 生成 ----
+context = torch.zeros((1, 1), dtype=torch.long, device=device)
+print(decode(model.generate(context, max_new_tokens=500)[0].tolist()))
+</code></pre>
+
+<div class="good-callout">
+  <b>预期</b>：GPU 上训 ~15 分钟，val loss 降到 ~1.48，能生成有莎士比亚味道（虽然语义还不通顺）的英文文本。CPU 上把参数调小（n_embd=64, n_layer=4, block_size=32）也能跑。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec13">13. ⭐ 学习过程高频卡点答疑（14 个 Q）</h2>
+
+<div class="qa-callout">
+  <div class="qa-q">Q1：get_batch 里为什么 randint 用 len(data) - block_size？</div>
+  <p>因为要切 <code>data[i:i+block_size+1]</code>，起点太靠末尾会越界。减 block_size 保证切片不超界（严格说应再减 1 更安全，Karpathy 这里有极小概率边界 bug，对大数据集无影响）。</p>
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q2：(T,T) @ (B,T,C) 广播不会报错吗？右边一个 T 一个 C 不相等</div>
+  <p><code>@</code> 是 matmul 不是逐元素乘。规则：<b>只看最后两维做矩阵乘（左最后一维==右倒数第二维，即 T==T），前面维度做 batch 广播</b>。左边补维成 (1,T,T)，batch 维 1 广播成 B，结果 (B,T,C)。你担心的 C 是输出列数，不参与匹配。"不相等报错"是 <code>*</code>（逐元素乘）的规则，用错了地方。</p>
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q3：(4,2,8,8) @ (4,3,8,5) 结果是什么</div>
+  <p><b>报错</b>。矩阵维 (8,8)@(8,5) 合法，但 batch 维 (4,2) vs (4,3) 里 2 和 3 无法广播（不相等且都不是 1）。换成 (4,1,8,8) 才能广播成 (4,3,8,5)。</p>
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q4：softmax 具体怎么算</div>
+  <p>三步：① 每个元素取 exp（变正数 + 拉大差距）② 求和当分母 ③ 各自除以和（归一化成和为 1）。在 attention 里把 Q·K 的原始分数变成注意力权重；配合 -inf mask，未来位置 <code>e^(-inf)=0</code> 自动归零。实战用 <code>F.softmax(x, dim=-1)</code>，内部做了"减最大值"的数值稳定处理。</p>
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q5：lm_head 为什么出现得很突兀</div>
+  <p>lm_head = Language Modeling Head，就是最后一个 <code>Linear(n_embd, vocab_size)</code>，把每个位置的语义向量翻译成"下一个 token 是词表各字符的分数"。它和入口 token embedding 是镜像操作（vocab→embd vs embd→vocab）。"head"是行话，指"接在主干后做具体任务输出的层"。</p>
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q6：nn.Embedding(2,3) 默认值是多少</div>
+  <p>权重是 (2,3) 矩阵，默认用标准正态 N(0,1) 随机初始化（不是 0），且是可学习参数。训练前是随机噪声，训练后才涌现语义。大模型常改成 std=0.02 的小初始化。</p>
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q7：Q/K/V 到底是什么？为什么要三个</div>
+  <p>x 经过三个不同 Linear 投影出三个角色：Q（我想找什么）、K（我是什么标签）、V（我的内容）。Q·K 算"该关注谁"，V 提供"关注到的内容"，加权求和。三者分开是为了让"找什么""被找的标签""实际内容"各自独立优化。Q 和 K 分开才能表达非对称关注；V 和 K 分开让"被检索"和"提供内容"各自最优。</p>
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q8：每个 token 自己的 k 是干什么用的</div>
+  <p>两个用途：① 被自己的 q 匹配（算"对自己的关注度"，wei 矩阵对角线）② 被未来 token 的 q 匹配（作为标签被检索）。causal mask 是下三角<b>含对角线</b>，所以能看到自己。注意：attention 输出 out 是"新表示"，<b>不是 v</b>（v 只是算 out 时的原料之一）。</p>
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q9：既然 Q·K 算出关注度了，为什么还要 V</div>
+  <p>Q·K 算出的是"关注多少"（权重/比例），但权重本身不含内容。必须有"被加权的东西"，那就是 V。<b>Q·K 是导航，V 是货物</b>。没有 V，就只有"该关注谁"的比例，却没有"关注到的内容"可搬，token 表示得不到丰富。</p>
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q10：wei 缩放的 1/√head_size 怎么来的</div>
+  <p>q·k 是 head_size 个乘积相加，方差 = head_size，标准差 √head_size。点积太大 → softmax 过于尖锐（接近 one-hot）→ 退化成硬选择 + 梯度消失。除以 √head_size 把方差拉回 1。和 Ep.3 Kaiming 是同一招（多项相加方差膨胀，除以 √项数）。</p>
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q11：n_embd // 4 是什么意思（多头切分）</div>
+  <p>num_heads=4 时，head_size = n_embd // 4，把总维度切成 4 份，每个头管一份（学不同关注模式），拼接后恢复 n_embd。计算量与单头基本相同。cat 后用 proj 让各头信息融合。</p>
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q12：FeedForward 每个 token 内部加工的目的是什么</div>
+  <p>attention 只是线性地"搬运/混合"token 间信息，缺非线性、缺深加工。FFN 对每个 token 独立做"升维→ReLU→降维"的非线性变换，把收集来的信息"消化提炼"。<b>attention 管交流（横向），FFN 管思考（纵向）</b>。升维 4 倍给非线性更大空间。</p>
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q13：残差解决梯度消失，是前向还是反向</div>
+  <p><b>反向传播</b>。梯度只在反向传播中流动，凡是"梯度消失/爆炸"都是反向的事。残差 <code>out = x + f(x)</code> 让 <code>∂out/∂x = 1 + ∂f/∂x</code>，那个"+1"给梯度直通高速路。前向时残差也在（增量学习），但那是附带好处，不是核心目的。</p>
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q14：dropout 是什么</div>
+  <p>训练时随机丢弃一部分神经元（置 0），强迫网络冗余、不依赖单点，等效训练大量子网络的集成，防过拟合。<b>训练时丢 + 放大补偿，推理时全保留</b>（靠 train()/eval() 切换）。Ep.5 用它是因为 Shakespeare 是小数据集；现代 LLM 预训练基本关掉 dropout（数据太多不会过拟合，且拖慢收敛）。</p>
+</div>
+
+<div class="good-callout">
+  <b>📌 补充：梯度 vs 导数、梯度爆炸</b><br>
+  <b>导数</b>是单变量的斜率（一个数）；<b>梯度</b>是多变量各偏导组成的向量，指向上升最快方向（这是定理，靠方向导数 <code>∇f·u=|∇f|cosθ</code> 证明，同向时最大）。<br>
+  <b>梯度爆炸</b>是梯度消失的反面：反向连乘乘子 >1 → 梯度指数增大到 ∞/NaN → 参数冲飞。解法是<b>梯度裁剪</b>（限制模长，方向不变）+ 合理初始化 + 归一化 + warmup。LLM 训练把防爆炸当头等大事（梯度裁剪 + 频繁 checkpoint + loss 监控）。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec14">14. Karpathy 官方代码 &amp; 资源</h2>
+
+<table>
+  <thead><tr><th>资源</th><th>链接</th></tr></thead>
+  <tbody>
+    <tr><td>📺 YouTube 视频</td><td><a href="https://www.youtube.com/watch?v=kCc8FmEb1nY" target="_blank">Let's build GPT: from scratch, in code, spelled out</a></td></tr>
+    <tr><td>📓 Ep.5 代码仓库</td><td><a href="https://github.com/karpathy/ng-video-lecture" target="_blank">karpathy/ng-video-lecture</a>（gpt.py）</td></tr>
+    <tr><td>🚀 Colab</td><td><a href="https://colab.research.google.com/github/karpathy/ng-video-lecture/blob/master/gpt.ipynb" target="_blank">在 Colab 中运行</a></td></tr>
+    <tr><td>🏭 工程版</td><td><a href="https://github.com/karpathy/nanoGPT" target="_blank">karpathy/nanoGPT</a>（带训练/采样/加载 GPT-2 权重）</td></tr>
+    <tr><td>📄 数据集</td><td><a href="https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt" target="_blank">tiny shakespeare input.txt</a></td></tr>
+    <tr><td>📄 Transformer 原论文</td><td><a href="https://arxiv.org/abs/1706.03762" target="_blank">Attention Is All You Need (2017)</a></td></tr>
+    <tr><td>📄 GPT-3 论文</td><td><a href="https://arxiv.org/abs/2005.14165" target="_blank">Language Models are Few-Shot Learners</a></td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2 id="summary">📌 一句话总结</h2>
+
+<blockquote>
+  <b>这一集把所有积累拼成了一个完整的 GPT：</b><br>
+  &nbsp;&nbsp;token+position embedding → N 层 [多头 self-attention + FeedForward，各包残差+LayerNorm] → lm_head → 自回归 generate。<br>
+  &nbsp;&nbsp;<b>self-attention（Q·K 路由 + V 内容）是灵魂，残差+LayerNorm 让深层训得动，generate 是 LLM 推理的最简原型。</b><br>
+  &nbsp;&nbsp;从这里加上 KV Cache + PagedAttention + Continuous Batching，就是 vLLM —— 推理方向的主战场。
+</blockquote>
+
+<h3>🔭 下一步（Stage 0 收尾 → Stage 1）</h3>
+<ul>
+  <li>跑通 gpt.py（CPU 调小参数，或租 GPU），看它生成莎士比亚文本</li>
+  <li>clone nanoGPT，对照看工程版 model.py 与 generate()</li>
+  <li>Ep.4（backprop ninja）可选看前 30min</li>
+  <li><b>进入 Stage 1</b>：vLLM 源码（block_manager、scheduler）—— KV Cache 与你的 Kafka 存储经验直接共振</li>
+</ul>
+
+</body>
+</html>
