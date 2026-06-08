@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>KV Cache 从 0 到 1：把 nanoGPT 的 generate 加速 100 倍的关键技术 — 学习笔记</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] }
+  };
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<style>
+  :root {
+    --bg: #fbfaf7;
+    --fg: #1f2328;
+    --muted: #57606a;
+    --accent: #0969da;
+    --accent2: #8250df;
+    --code-bg: #f6f8fa;
+    --code-fg: #24292f;
+    --border: #d0d7de;
+    --callout-bg: #fff8c5;
+    --callout-border: #d4a72c;
+    --infra-bg: #ddf4ff;
+    --infra-border: #54aeff;
+    --good-bg: #dafbe1;
+    --good-border: #4ac26b;
+    --qa-bg: #fbefff;
+    --qa-border: #a371f7;
+    --warn-bg: #ffebe9;
+    --warn-border: #cf222e;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    line-height: 1.78;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 44px 28px 96px;
+    font-size: 16px;
+  }
+  h1 {
+    font-size: 30px;
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 14px;
+    margin-bottom: 6px;
+    line-height: 1.35;
+  }
+  .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 8px; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 36px; }
+  h2 {
+    font-size: 23px;
+    margin-top: 52px;
+    border-left: 4px solid var(--accent);
+    padding-left: 12px;
+  }
+  h3 { font-size: 18px; margin-top: 30px; color: var(--accent2); }
+  h4 { font-size: 16px; margin-top: 22px; color: var(--fg); }
+  p { margin: 14px 0; }
+  code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 14px;
+    color: #cf222e;
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-size: 13.5px;
+    line-height: 1.6;
+  }
+  pre code { background: transparent; padding: 0; color: inherit; font-size: 13.5px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  blockquote {
+    border-left: 4px solid var(--border);
+    color: var(--muted);
+    padding: 4px 14px;
+    margin: 18px 0;
+    background: #fff;
+  }
+  .callout {
+    background: var(--callout-bg);
+    border-left: 4px solid var(--callout-border);
+    padding: 12px 16px; margin: 18px 0; border-radius: 4px;
+  }
+  .callout-title { font-weight: 600; margin-bottom: 4px; }
+  .infra-callout {
+    background: var(--infra-bg);
+    border-left: 4px solid var(--infra-border);
+    padding: 14px 18px; margin: 22px 0; border-radius: 4px;
+  }
+  .infra-callout .callout-title { color: #0a3069; }
+  .good-callout {
+    background: var(--good-bg);
+    border-left: 4px solid var(--good-border);
+    padding: 12px 16px; margin: 18px 0; border-radius: 4px;
+  }
+  .warn-callout {
+    background: var(--warn-bg);
+    border-left: 4px solid var(--warn-border);
+    padding: 12px 16px; margin: 18px 0; border-radius: 4px;
+  }
+  .qa-callout {
+    background: var(--qa-bg);
+    border-left: 4px solid var(--qa-border);
+    padding: 14px 18px; margin: 22px 0; border-radius: 4px;
+  }
+  .qa-callout .qa-q { font-weight: 600; color: #6f42c1; margin-bottom: 8px; }
+  table { border-collapse: collapse; width: 100%; margin: 18px 0; font-size: 14.5px; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: #f6f8fa; font-weight: 600; }
+  ul, ol { padding-left: 28px; }
+  li { margin: 6px 0; }
+  .toc {
+    background: #fff; border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px 22px; margin: 28px 0; font-size: 14.5px;
+  }
+  .toc-title { font-weight: 600; margin-bottom: 6px; color: var(--muted); font-size: 13px; letter-spacing: 0.5px; }
+  .toc ol { padding-left: 22px; margin: 6px 0; }
+  .tag {
+    display: inline-block; background: #f6f8fa; border: 1px solid var(--border);
+    border-radius: 12px; padding: 1px 10px; font-size: 12px; color: var(--muted); margin-right: 6px;
+  }
+  hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+  .ascii {
+    font-family: "SF Mono", Menlo, Consolas, monospace; white-space: pre;
+    background: #fff; border: 1px dashed var(--border); padding: 14px;
+    border-radius: 6px; font-size: 13px; line-height: 1.5; overflow-x: auto;
+  }
+</style>
+</head>
+<body>
+
+<h1>KV Cache 从 0 到 1：把 nanoGPT 的 generate 加速 100 倍的关键技术</h1>
+<div class="subtitle">— 从"为什么 generate 这么慢"开始，到推理引擎的第一块基石</div>
+<div class="meta">
+  <span class="tag">学习笔记</span>
+  <span class="tag">AI Infra</span>
+  <span class="tag">推理引擎</span>
+  <span class="tag">KV Cache</span>
+  <span class="tag">nanoGPT</span>
+  <span class="tag">Stage 1 / Week 1</span>
+</div>
+
+<div class="toc">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#sec1">1. 引子：跑 nanoGPT 的 generate() 慢得令人发指</a></li>
+    <li><a href="#sec2">2. 复盘 nanoGPT 的 generate()：朴素实现长啥样</a></li>
+    <li><a href="#sec3">3. 哪些计算在重复：把浪费量化出来</a></li>
+    <li><a href="#sec4">4. 关键 Insight：K、V 为什么可缓存（两条事实）</a></li>
+    <li><a href="#sec5">5. Q 为什么不需要 cache</a></li>
+    <li><a href="#sec6">6. Prefill 与 Decode：两个阶段，两套行为</a></li>
+    <li><a href="#sec7">7. 改 nanoGPT：手写一个 KV Cache 版 generate()</a></li>
+    <li><a href="#sec8">8. 显存代价：每 token 到底吃多少 KV</a></li>
+    <li><a href="#sec9">9. 引出 PagedAttention（下一篇的钩子）</a></li>
+    <li><a href="#sec10">10. ⭐ 学习过程高频卡点答疑（10 个 Q）</a></li>
+    <li><a href="#sec11">11. 参考资料与 Colab</a></li>
+  </ol>
+</div>
+
+<!-- ===================== -->
+<h2 id="sec1">1. 引子：跑 nanoGPT 的 generate() 慢得令人发指</h2>
+
+<p>跟着 Karpathy 的 Ep.5 把一个 GPT 训出来之后，第一件事是兴奋地调 <code>generate()</code> 看它"说人话"。然后你会发现一件事：</p>
+
+<blockquote>
+<b>生成第 1 个 token 很快，生成第 100 个 token 越来越慢，生成第 500 个 token 几乎在爬。</b>
+</blockquote>
+
+<p>如果做个 profile（或者直接打时间戳），会看到 attention 层吃掉了 80%+ 的时间，而且每生成一个新 token，attention 的耗时会随当前序列长度增长。</p>
+
+<div class="callout">
+  <div class="callout-title">本文目标</div>
+  把这件事的原因彻底讲清楚，并写出一个能真正运行的 KV Cache 版 <code>generate()</code>。这是推理引擎所有优化的<b>第 0 块基石</b>——后面 PagedAttention、Continuous Batching、Prefix Caching 全都基于它。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec2">2. 复盘 nanoGPT 的 generate()：朴素实现长啥样</h2>
+
+<p>Karpathy 在 Ep.5 里的 <code>generate()</code> 是这样的（精简版）：</p>
+
+<pre><code>@torch.no_grad()
+def generate(self, idx, max_new_tokens):
+    # idx: (B, T) 当前已知的 token 序列
+    for _ in range(max_new_tokens):
+        # 1) 把上下文截到 block_size（位置编码上限）
+        idx_cond = idx[:, -self.block_size:]
+
+        # 2) 整段 forward：每次都从头算
+        logits, _ = self(idx_cond)              # (B, T, vocab_size)
+
+        # 3) 只取最后一个位置的预测
+        logits = logits[:, -1, :]               # (B, vocab_size)
+        probs  = F.softmax(logits, dim=-1)
+
+        # 4) 采样下一个 token
+        idx_next = torch.multinomial(probs, num_samples=1)  # (B, 1)
+        idx = torch.cat([idx, idx_next], dim=1)              # 拼到末尾
+    return idx
+</code></pre>
+
+<p>整个函数只有四步，但第 2 步隐藏了所有的性能问题——<b>"整段 forward"</b>意味着：每生成一个新 token，模型把已经算过 N 遍的历史 token 又算了一遍。</p>
+
+<!-- ===================== -->
+<h2 id="sec3">3. 哪些计算在重复：把浪费量化出来</h2>
+
+<p>假设当前已经生成了 3 个 token：<code>[A, B, C]</code>。在 self-attention 层，每个 token 都会算出自己的 Q / K / V：</p>
+
+<div class="ascii">位置 0 (A)：  Q_A,  K_A,  V_A
+位置 1 (B)：  Q_B,  K_B,  V_B
+位置 2 (C)：  Q_C,  K_C,  V_C</div>
+
+<p>然后 attention 输出（causal mask 保证只看自己和过去）：</p>
+
+<div class="ascii">out_0 = softmax(Q_A · [K_A])              · [V_A]
+out_1 = softmax(Q_B · [K_A, K_B])          · [V_A, V_B]
+out_2 = softmax(Q_C · [K_A, K_B, K_C])     · [V_A, V_B, V_C]</div>
+
+<p><code>generate()</code> 只拿 <code>out_2</code>（最后一个位置）去预测 token D，<b><code>out_0</code> 和 <code>out_1</code> 算了就扔</b>。</p>
+
+<p>下一步生成 D 时，输入变成 <code>[A, B, C, D]</code>，又把 attention 跑一遍：</p>
+
+<div class="ascii">位置 0 (A)：  Q_A,  K_A,  V_A     ← 跟上一步一模一样
+位置 1 (B)：  Q_B,  K_B,  V_B     ← 跟上一步一模一样
+位置 2 (C)：  Q_C,  K_C,  V_C     ← 跟上一步一模一样
+位置 3 (D)：  Q_D,  K_D,  V_D     ← 唯一新算的</div>
+
+<h3>把浪费量化</h3>
+
+<p>设序列长度 $T$、hidden_dim $d$。单步 attention 计算量 $\\mathcal{O}(T^2 \\cdot d)$（Q @ K^T 主导）。</p>
+
+<p>生成 $N$ 个 token 的<b>总计算量</b>：</p>
+
+<p>$$\\sum_{t=1}^{N} \\mathcal{O}(t^2 \\cdot d) = \\mathcal{O}(N^3 \\cdot d)$$</p>
+
+<p>而真正"有用"的计算只有每步最后一个位置的 attention，也就是 $\\mathcal{O}(t \\cdot d)$ 这部分。其余 $\\mathcal{O}(t^2 - t)$ 都是冗余。</p>
+
+<div class="warn-callout">
+  <div class="callout-title">⚠ 量级感</div>
+  N = 1000 时，朴素 generate 的总 attention 计算量 $\\approx 10^9 \\cdot d$，KV Cache 版只需 $\\approx 10^6 \\cdot d$，<b>差 1000 倍</b>。这就是为什么 LLM 推理引擎必须实现 KV Cache。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec4">4. 关键 Insight：K、V 为什么可缓存（两条事实）</h2>
+
+<p>整个 KV Cache 的理论基础是<b>两条几乎显然的事实</b>，但必须同时成立：</p>
+
+<table>
+  <thead><tr><th>事实</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>① K、V 只依赖自身位置</td>
+      <td><code>K_i = x_i · W_k</code>，<code>V_i = x_i · W_v</code>。给定 token i 的输入 $x_i$，K 和 V 是确定值，不受未来 token 影响。</td>
+    </tr>
+    <tr>
+      <td>② Causal Mask 保证位置 i 的 attention 只看 ≤ i</td>
+      <td>未来 token 不会修改过去 token 的 attention 输出，因此历史 K、V 一旦算出就永远有效。</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>合起来：<b>"历史 token 的 K、V 是只读的不可变数据"</b>。这跟操作系统里"只读页可以无成本共享"是一个味道。</p>
+
+<div class="infra-callout">
+  <div class="callout-title">🔧 Infra 视角</div>
+  这个观察听起来简单，但实际上是<b>分布式系统、缓存系统、数据库优化里反复出现的一类核心定理</b>：先识别"不可变的部分"，再围绕它做共享、复用、缓存、并发。在 Kafka 里，Segment 文件只追加、永不修改，所以可以被多个 consumer 同时 mmap 读——这是同构思想。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec5">5. Q 为什么不需要 cache</h2>
+
+<p>很多人第一次看 KV Cache 会问：那 Q 为什么不也缓存？答案分两层：</p>
+
+<h3>① Q 也是只依赖自身位置的（理论上可以缓存）</h3>
+
+<p>从公式看，<code>Q_i = x_i · W_q</code>，跟 K、V 完全对称，也是只依赖自身。所以理论上"可以"缓存。</p>
+
+<h3>② 但 decode 阶段每步只用一个 Q，缓存它没意义</h3>
+
+<p>生成第 t 个 token 时，attention 输出公式：</p>
+
+<div class="ascii">out_t = softmax(Q_t · [K_0, K_1, ..., K_t]^T / √d) · [V_0, V_1, ..., V_t]</div>
+
+<p>只有 <b>Q_t</b>（当前位置的 Q）参与运算。下一步生成 t+1 时，又只用 <b>Q_{t+1}</b>。<b>历史 Q 算了就扔，根本不会再读</b>——所以缓存它纯粹浪费显存。</p>
+
+<div class="good-callout">
+  <div class="callout-title">✓ 一句话总结</div>
+  K、V 是"被多次读取的资源"（每步生成都要查所有历史 K、V），所以值得缓存。<br>
+  Q 是"用一次就丢的临时量"，缓存无收益。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec6">6. Prefill 与 Decode：两个阶段，两套行为</h2>
+
+<p>引入 KV Cache 之后，推理过程被自然切成两个阶段。这两个阶段的<b>计算模式完全不同</b>，是后面理解 vLLM 调度器的关键。</p>
+
+<h3>Prefill：处理用户的 prompt（一次性、并行）</h3>
+
+<p>用户输入 100 个 token 的 prompt，这 100 个 token 一起塞进模型：</p>
+
+<pre><code># x: (1, 100, d) ← 整段 prompt 的 embedding
+Q = x @ W_q                 # (1, 100, d)  ← 100 个位置的 Q 同时算
+K = x @ W_k                 # (1, 100, d)  ← 100 个位置的 K 同时算
+V = x @ W_v                 # (1, 100, d)  ← 100 个位置的 V 同时算
+
+cache_K = K                 # 全部 K 一次性塞进 cache
+cache_V = V                 # 全部 V 一次性塞进 cache
+
+# 标准 causal attention
+out = softmax(Q @ K.T / √d + causal_mask) @ V
+
+# 只用最后一个位置的输出预测第 101 个 token
+</code></pre>
+
+<div class="callout">
+  <div class="callout-title">关键点</div>
+  Prefill 阶段 <b>所有位置的 K、V 是一次矩阵乘法算出来的</b>，不存在"历史 K、V 重算"这件事。所以 Prefill 阶段 KV Cache 不带来加速——它的角色是<b>"建立 cache"</b>，不是<b>"使用 cache"</b>。
+</div>
+
+<h3>Decode：一个一个吐 token（串行、每步只算 1 个）</h3>
+
+<pre><code># x_new: (1, 1, d) ← 只有 1 个新 token 的 embedding
+q     = x_new @ W_q          # (1, 1, d)  ← 只算 1 个 Q
+k_new = x_new @ W_k          # (1, 1, d)  ← 只算 1 个 K
+v_new = x_new @ W_v          # (1, 1, d)  ← 只算 1 个 V
+
+# 把新 K、V 追加到 cache 尾部
+cache_K = torch.cat([cache_K, k_new], dim=1)   # (1, T+1, d)
+cache_V = torch.cat([cache_V, v_new], dim=1)   # (1, T+1, d)
+
+# 注意：因为只有 1 个 Q，不需要 causal mask（它"过去"的全是有效的）
+out = softmax(q @ cache_K.transpose(-1,-2) / √d) @ cache_V   # (1, 1, d)
+</code></pre>
+
+<h3>两阶段对比</h3>
+
+<table>
+  <thead>
+    <tr><th>维度</th><th>Prefill</th><th>Decode</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>输入长度</td><td>T（一整段 prompt）</td><td>1（上一步刚生成的 token）</td></tr>
+    <tr><td>Q / K / V 计算</td><td>T 个并行</td><td>1 个</td></tr>
+    <tr><td>Attention 算法</td><td>标准 causal attention</td><td>1 个 Q 对全部 K、V</td></tr>
+    <tr><td>KV Cache 角色</td><td>建立（写）</td><td>使用（读 + 追加写）</td></tr>
+    <tr><td>计算瓶颈</td><td>compute-bound</td><td>memory-bound（KV 读取）</td></tr>
+    <tr><td>单步耗时</td><td>$\\mathcal{O}(T^2 d)$</td><td>$\\mathcal{O}(T d)$</td></tr>
+  </tbody>
+</table>
+
+<div class="infra-callout">
+  <div class="callout-title">🔧 Infra 视角</div>
+  Decode 是 <b>memory-bound</b>——单步计算量很小，但要把整段 KV Cache 从显存读出来。这意味着 LLM 推理优化的核心矛盾从"算力不够"变成"显存带宽不够"。这是后面 FlashAttention、PagedAttention、量化 KV 等所有 decode 优化的出发点。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec7">7. 改 nanoGPT：手写一个 KV Cache 版 generate()</h2>
+
+<p>把上面的 idea 落到 Karpathy 的 nanoGPT 上。我们需要做三处改动：</p>
+
+<ol>
+  <li>改 <code>CausalSelfAttention.forward</code>，让它接受外部 cache 并能追加</li>
+  <li>改 <code>Block.forward</code>，把 cache 透传</li>
+  <li>改 <code>GPT.generate</code>，引入 prefill / decode 两阶段</li>
+</ol>
+
+<h3>7.1 改 Attention 层</h3>
+
+<pre><code>class CausalSelfAttention(nn.Module):
+    def __init__(self, n_embd, n_head, block_size):
+        super().__init__()
+        assert n_embd % n_head == 0
+        self.n_head = n_head
+        self.head_dim = n_embd // n_head
+        self.qkv = nn.Linear(n_embd, 3 * n_embd, bias=False)
+        self.proj = nn.Linear(n_embd, n_embd, bias=False)
+        # 训练时还要 causal mask，这里略
+
+    def forward(self, x, kv_cache=None):
+        """
+        x: (B, T_in, C)  Prefill 时 T_in = prompt 长度；Decode 时 T_in = 1
+        kv_cache: None 表示 prefill；否则是 (cache_k, cache_v)，每个 (B, n_head, T_past, head_dim)
+        """
+        B, T_in, C = x.shape
+        qkv = self.qkv(x)                                 # (B, T_in, 3C)
+        q, k, v = qkv.split(C, dim=2)                     # 各 (B, T_in, C)
+
+        # reshape 成多头：(B, n_head, T_in, head_dim)
+        q = q.view(B, T_in, self.n_head, self.head_dim).transpose(1, 2)
+        k = k.view(B, T_in, self.n_head, self.head_dim).transpose(1, 2)
+        v = v.view(B, T_in, self.n_head, self.head_dim).transpose(1, 2)
+
+        # ====== KV Cache 核心：拼接历史 ======
+        if kv_cache is not None:
+            cache_k, cache_v = kv_cache                   # 每个 (B, n_head, T_past, head_dim)
+            k = torch.cat([cache_k, k], dim=2)            # (B, n_head, T_past + T_in, head_dim)
+            v = torch.cat([cache_v, v], dim=2)
+        new_cache = (k, v)                                # 返回新的 cache
+
+        # ====== Attention 计算 ======
+        # 推理时 T_in 在 decode 阶段为 1，q 对全部 k 做注意力——自然只看到过去和当前，不需要 mask
+        # Prefill 阶段 T_in > 1 且 cache 为 None，需要 causal mask
+        att = (q @ k.transpose(-2, -1)) / (self.head_dim ** 0.5)   # (B, nh, T_in, T_total)
+        if kv_cache is None and T_in > 1:
+            mask = torch.tril(torch.ones(T_in, T_in, device=x.device))
+            att = att.masked_fill(mask == 0, float('-inf'))
+        att = F.softmax(att, dim=-1)
+        y = att @ v                                                 # (B, nh, T_in, head_dim)
+        y = y.transpose(1, 2).contiguous().view(B, T_in, C)
+        return self.proj(y), new_cache
+</code></pre>
+
+<h3>7.2 改 Block</h3>
+
+<pre><code>class Block(nn.Module):
+    def __init__(self, n_embd, n_head, block_size):
+        super().__init__()
+        self.ln1  = nn.LayerNorm(n_embd)
+        self.attn = CausalSelfAttention(n_embd, n_head, block_size)
+        self.ln2  = nn.LayerNorm(n_embd)
+        self.ffn  = FeedForward(n_embd)   # 沿用 Ep.5
+
+    def forward(self, x, kv_cache=None):
+        attn_out, new_cache = self.attn(self.ln1(x), kv_cache=kv_cache)
+        x = x + attn_out
+        x = x + self.ffn(self.ln2(x))
+        return x, new_cache
+</code></pre>
+
+<h3>7.3 改 GPT.generate（核心）</h3>
+
+<pre><code>@torch.no_grad()
+def generate(self, idx, max_new_tokens):
+    """
+    idx: (B, T_prompt)  用户输入
+    """
+    B, T_prompt = idx.shape
+    device = idx.device
+
+    # ============ Prefill：一次性把整段 prompt 灌进去 ============
+    tok_emb = self.tok_emb(idx)                         # (B, T_prompt, C)
+    pos_emb = self.pos_emb(torch.arange(T_prompt, device=device))  # (T_prompt, C)
+    x = tok_emb + pos_emb
+
+    kv_caches = [None] * len(self.blocks)
+    for i, block in enumerate(self.blocks):
+        x, kv_caches[i] = block(x, kv_cache=None)        # 注意：prefill 时 cache 是 None
+
+    x = self.ln_f(x)
+    logits = self.lm_head(x[:, -1, :])                   # 只用最后一个位置预测
+    probs = F.softmax(logits, dim=-1)
+    idx_next = torch.multinomial(probs, num_samples=1)   # (B, 1)
+    idx = torch.cat([idx, idx_next], dim=1)
+
+    # ============ Decode：循环吐 token，每步只算 1 个 ============
+    for step in range(max_new_tokens - 1):
+        T_past = idx.shape[1] - 1                        # cache 里已有的长度
+
+        tok_emb = self.tok_emb(idx_next)                 # (B, 1, C)
+        pos_emb = self.pos_emb(torch.tensor([T_past], device=device))  # (1, C)
+        x = tok_emb + pos_emb
+
+        # 透传 cache，每个 block 更新自己的 cache
+        for i, block in enumerate(self.blocks):
+            x, kv_caches[i] = block(x, kv_cache=kv_caches[i])
+
+        x = self.ln_f(x)
+        logits = self.lm_head(x[:, -1, :])
+        probs = F.softmax(logits, dim=-1)
+        idx_next = torch.multinomial(probs, num_samples=1)
+        idx = torch.cat([idx, idx_next], dim=1)
+
+    return idx
+</code></pre>
+
+<div class="callout">
+  <div class="callout-title">实现要点</div>
+  <ul>
+    <li><code>kv_caches</code> 是一个 <b>list of tuples</b>，每层一份 (k, v)，每层独立维护</li>
+    <li>Prefill 时传 <code>None</code> → attention 层认为是"建立 cache"</li>
+    <li>Decode 时传上一步返回的 cache → attention 层把新 K、V 追加进去</li>
+    <li>位置编码要正确：decode 阶段位置是 <code>T_past</code>，<b>不能从 0 开始</b>（这是新手最容易踩的坑）</li>
+  </ul>
+</div>
+
+<div class="warn-callout">
+  <div class="callout-title">⚠ 实现陷阱</div>
+  上面用 <code>torch.cat</code> 拼接 cache 是<b>最朴素</b>的写法，每次都会重新分配一块新显存，把旧 cache 拷过去。生产实现（包括 nanoGPT 后期的版本和 HuggingFace transformers）会<b>预分配一个 max_len 的固定 buffer，然后只往里 in-place 写</b>。再之后是 vLLM 的 PagedAttention——把这块 buffer 切成固定大小的 block，按需分配——这是下一篇的主题。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec8">8. 显存代价：每 token 到底吃多少 KV</h2>
+
+<p>省时间不是白来的。每生成一个 token，所有层都要往 cache 写一份 K 和一份 V。</p>
+
+<p><b>单 token 的 KV Cache 大小：</b></p>
+
+<p>$$\\text{KV per token} = 2 \\times L \\times H \\times d_h \\times \\text{bytes}$$</p>
+
+<p>其中 2 = K + V，L = 层数，H = 头数，$d_h$ = head_dim，bytes = 单元素字节数（fp16 是 2）。</p>
+
+<h3>用 LLaMA-7B 算一遍</h3>
+
+<table>
+  <thead><tr><th>项</th><th>值</th></tr></thead>
+  <tbody>
+    <tr><td>层数 L</td><td>32</td></tr>
+    <tr><td>头数 H</td><td>32</td></tr>
+    <tr><td>head_dim $d_h$</td><td>128</td></tr>
+    <tr><td>精度</td><td>fp16（2 字节）</td></tr>
+    <tr><td><b>单 token KV 大小</b></td><td><b>2 × 32 × 32 × 128 × 2 = 524,288 字节 ≈ 512 KB</b></td></tr>
+    <tr><td>序列 2048 token</td><td>≈ 1 GB</td></tr>
+    <tr><td>序列 8192 token</td><td>≈ 4 GB</td></tr>
+  </tbody>
+</table>
+
+<div class="warn-callout">
+  <div class="callout-title">⚠ 数量级感</div>
+  一张 24GB 的 RTX 4090，先扣掉模型权重 14GB（fp16 的 7B 模型），只剩 10GB 给 KV Cache。也就是说 <b>4090 上跑 LLaMA-7B 同时最多支持的总 token 数大约 20K</b>——这要分给所有并发请求。一个请求拉满 8K，你就只能再服务 1-2 个请求。
+</div>
+
+<p>所以"减少 KV 显存"本身就是一个独立的大方向，分支出几条优化路线：</p>
+
+<table>
+  <thead><tr><th>方向</th><th>代表技术</th><th>主要降低</th></tr></thead>
+  <tbody>
+    <tr><td>结构层面</td><td>MQA / GQA（多 Q 共享 KV）</td><td>H 维度</td></tr>
+    <tr><td>量化</td><td>KV Cache INT8 / FP8</td><td>bytes 维度</td></tr>
+    <tr><td>显存管理</td><td>PagedAttention</td><td>消除碎片，提高利用率</td></tr>
+    <tr><td>共享</td><td>Prefix Caching</td><td>同 prompt 复用</td></tr>
+    <tr><td>外存</td><td>KV Offload to CPU/SSD</td><td>不在 GPU 上常驻</td></tr>
+  </tbody>
+</table>
+
+<!-- ===================== -->
+<h2 id="sec9">9. 引出 PagedAttention（下一篇的钩子）</h2>
+
+<p>我们刚刚的实现有一个隐藏问题：<b>每个请求要预留多少 cache 显存？</b></p>
+
+<ul>
+  <li>给每个请求预分配 <code>max_len</code>？——大部分请求根本生成不到 max_len，<b>浪费</b></li>
+  <li>按需 <code>torch.cat</code> 增长？——频繁分配释放，<b>显存碎片化</b>，长时间运行后即使总显存够也分不出来连续大块</li>
+  <li>多请求并发时，每个请求 cache 长度不一样，<b>没法批量算 attention</b>（shape 对不上）</li>
+</ul>
+
+<p>这跟 1960 年代操作系统遇到的问题完全一样：每个进程要多少内存？连续分配浪费、按需分配碎片。OS 的解法是<b>虚拟内存 + 分页</b>。</p>
+
+<p>vLLM 论文（PagedAttention，SOSP'23）做的事情：</p>
+
+<div class="ascii">把每个请求的 KV Cache 切成固定大小的 block（默认 16 个 token 一块）
+显存上预分配一个全局 block pool
+每个请求维护一张 "block table"（虚拟 → 物理映射，等价于 OS 的页表）
+attention kernel 接受 block table 作为间接寻址
+→ 物理上不连续的 block 可以服务一个逻辑上连续的序列
+→ 显存利用率从 ~30% 提升到 >90%</div>
+
+<div class="infra-callout">
+  <div class="callout-title">🔧 同构感知</div>
+  PagedAttention 是 <b>真的</b>对应 OS 分页（这个类比不是硬凑——vLLM 论文一作 Woosuk Kwon 本人在 talk 里多次说过设计灵感就来自此）：
+  <ul>
+    <li>OS 页表 ↔ block table</li>
+    <li>物理页 ↔ KV block</li>
+    <li>虚拟地址 ↔ 序列位置</li>
+    <li>Copy-on-Write ↔ Beam Search 共享前缀</li>
+  </ul>
+  下一篇博客 07《PagedAttention 源码解读 - 块管理篇》会逐行读 <code>vllm/v1/core/block_pool.py</code>。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec10">10. ⭐ 学习过程高频卡点答疑（10 个 Q）</h2>
+
+<div class="qa-callout">
+  <div class="qa-q">Q1：Q 为什么不需要 cache？</div>
+  Decode 阶段每步只用<b>当前位置</b>的一个 Q（去查所有历史 K、V），历史 Q 算出来就丢，不会再被读到。而 K、V 每步都要被新的 Q 查，所以必须留下来。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q2：Prefill 阶段为什么用不上 KV Cache 的加速？</div>
+  Prefill 时 T 个 token 是<b>一次矩阵乘法并行算出来的</b>，本来就没有"重复算历史"这件事。KV Cache 加速的本质是消除 decode 阶段"每步重算历史 K、V"的浪费——Prefill 没有这个浪费可消。Prefill 阶段 KV Cache 的角色是<b>"建立 cache"</b>，不是"使用 cache"。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q3：BERT 这种双向 attention 能用 KV Cache 吗？</div>
+  不能，两个原因都不满足：① 双向 attention 没有 causal 约束，每个位置的 K、V 会被未来位置查到，加新 token 时旧 token 的 attention 输出也变了；② BERT 是<b>一次性编码</b>整段文本（分类、抽取等任务），<b>不做自回归生成</b>，根本没有"一个一个吐"这件事，cache 的应用场景都不存在。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q4：请求结束后 KV Cache 怎么处理？</div>
+  必须立刻<b>释放</b>（归还到 block pool）。这是推理引擎调度器的核心职责之一——下下篇博客 08 讲调度器时会展开。<br>
+  另外一种特殊情况是<b>请求结束但前缀可被复用</b>（同一个 System Prompt 多用户共享），这就是 <b>Prefix Caching</b>：vLLM 给每个 block 算 hash，新请求来了先查 hash，命中就直接挂载——KV Cache 的精确复用，<b>不是粗略参照</b>，K、V 数值必须完全一致才能用，否则 attention 会全乱。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q5：KV Cache 拼接用 <code>torch.cat</code> 性能怎么样？为什么生产实现要预分配？</div>
+  <code>torch.cat</code> 每次都<b>重新分配显存 + 拷贝旧数据</b>，是 $\\mathcal{O}(T)$ 的，N 步生成累加 $\\mathcal{O}(N^2)$ 的搬运量，长序列会暴露。生产实现预分配一个固定 buffer <code>(B, n_head, max_len, head_dim)</code>，每步 in-place 写到 <code>cache[:, :, T_past:T_past+1, :]</code>，但代价是<b>每个请求都按 max_len 占显存</b>，于是有了 PagedAttention 切块按需分配。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q6：多个用户并发推理时，KV Cache 是各自独立还是共享？</div>
+  <b>默认完全独立</b>，每个请求有自己的 cache。共享只在两种情况发生：① Prefix Caching（同前缀复用，必须前缀 token 完全一致）；② Beam Search 同一请求的多个 beam 共享 prompt 部分（Copy-on-Write）。<b>不同用户的语义 K、V 不可能"差不多就行"地复用</b>——神经网络对数值精度敏感，错一点 attention 全错。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q7：MQA / GQA 怎么减小 KV Cache？</div>
+  标准 multi-head attention 每个头有自己的 K、V。<b>MQA</b>（Multi-Query Attention）让所有 Q 头共享<b>一组</b> K、V → KV 显存除以 H。<b>GQA</b>（Grouped-Query Attention）介于两者间，比如 8 个 Q 头共享 1 组 KV → KV 显存除以 8。LLaMA-2 70B、LLaMA-3 都用 GQA。代价是模型质量略降，但工程上极其划算。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q8：KV Cache 量化（INT8/FP8）会让模型变笨吗？</div>
+  会但有限。fp16 → int8 单元素字节数减半，KV 显存直接除以 2。实测大部分场景困惑度只升高 1-3%。但<b>有 outlier 通道</b>问题（少数 channel 数值范围特别大，量化误差被放大），需要 per-channel 或 per-token 量化策略。这是 W8 主题（Week 7 进阶推理优化阶段）。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q9：为什么说 decode 阶段是 memory-bound？</div>
+  Decode 每步：① 算 1 个 Q、K、V（很小，~$d^2$ 量级 FLOPS）；② 把整段历史 KV 从显存读出来做 attention（数据量 $\\mathcal{O}(T \\cdot d)$）。GPU 的算力远超显存带宽（A100 是 312TFLOPS vs 2TB/s），所以瓶颈在<b>把 KV 读上来</b>。这就是 FlashAttention 用 tile 化减少 HBM 读写、PagedAttention 通过更紧凑的内存布局提升带宽利用的根本动机。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q10：我自己写的 KV Cache 版 nanoGPT，怎么验证它没写错？</div>
+  最简单的方法：固定随机种子，<b>同一个 prompt 同一个模型权重</b>，跑朴素 generate 和 KV Cache generate，输出的 token 序列<b>应该完全一致</b>（在贪心解码或固定种子采样下）。如果对不上，99% 是位置编码的 bug——decode 阶段位置必须接续 prefill 末尾，不能从 0 开始。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec11">11. 参考资料与 Colab</h2>
+
+<ul>
+  <li>Karpathy nanoGPT 仓库：<a href="https://github.com/karpathy/nanoGPT" target="_blank">https://github.com/karpathy/nanoGPT</a></li>
+  <li>vLLM 论文：<a href="https://arxiv.org/abs/2309.06180" target="_blank">Efficient Memory Management for Large Language Model Serving with PagedAttention (SOSP'23)</a></li>
+  <li>vLLM 仓库：<a href="https://github.com/vllm-project/vllm" target="_blank">https://github.com/vllm-project/vllm</a>（重点看 <code>vllm/v1/core/</code>）</li>
+  <li>Hugging Face transformers 的 KV Cache 实现：<code>transformers/cache_utils.py</code>（生产级参考）</li>
+  <li>本篇 Colab Notebook：<a href="#" target="_blank">（待补：把上面 7.1–7.3 的代码塞进一个可跑的 nanoGPT 改造版）</a></li>
+</ul>
+
+<hr>
+
+<p style="color: var(--muted); font-size: 13.5px;">
+  这是 <b>Stage 1 / Week 1</b> 的第一篇，对应"AI Infra 转型完整学习计划"的推理引擎核心阶段开端。<br>
+  下一篇：<b>博客 07 · PagedAttention 源码解读 - 块管理篇</b>（逐行读 <code>vllm/v1/core/block_pool.py</code>）。
+</p>
+
+</body>
+</html>
