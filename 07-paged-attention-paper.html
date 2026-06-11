@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>PagedAttention 论文精读：vLLM 如何用 OS 分页思想把 KV Cache 利用率从 20% 拉到 96% — 学习笔记</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] }
+  };
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<style>
+  :root {
+    --bg: #fbfaf7;
+    --fg: #1f2328;
+    --muted: #57606a;
+    --accent: #0969da;
+    --accent2: #8250df;
+    --code-bg: #f6f8fa;
+    --code-fg: #24292f;
+    --border: #d0d7de;
+    --callout-bg: #fff8c5;
+    --callout-border: #d4a72c;
+    --infra-bg: #ddf4ff;
+    --infra-border: #54aeff;
+    --good-bg: #dafbe1;
+    --good-border: #4ac26b;
+    --qa-bg: #fbefff;
+    --qa-border: #a371f7;
+    --warn-bg: #ffebe9;
+    --warn-border: #cf222e;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    line-height: 1.78;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 44px 28px 96px;
+    font-size: 16px;
+  }
+  h1 {
+    font-size: 30px;
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 14px;
+    margin-bottom: 6px;
+    line-height: 1.35;
+  }
+  .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 8px; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 36px; }
+  h2 {
+    font-size: 23px;
+    margin-top: 52px;
+    border-left: 4px solid var(--accent);
+    padding-left: 12px;
+  }
+  h3 { font-size: 18px; margin-top: 30px; color: var(--accent2); }
+  h4 { font-size: 16px; margin-top: 22px; color: var(--fg); }
+  p { margin: 14px 0; }
+  code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 14px;
+    color: #cf222e;
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-size: 13.5px;
+    line-height: 1.6;
+  }
+  pre code { background: transparent; padding: 0; color: inherit; font-size: 13.5px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  blockquote {
+    border-left: 4px solid var(--border);
+    color: var(--muted);
+    padding: 4px 14px;
+    margin: 18px 0;
+    background: #fff;
+  }
+  .callout {
+    background: var(--callout-bg);
+    border-left: 4px solid var(--callout-border);
+    padding: 12px 16px; margin: 18px 0; border-radius: 4px;
+  }
+  .callout-title { font-weight: 600; margin-bottom: 4px; }
+  .infra-callout {
+    background: var(--infra-bg);
+    border-left: 4px solid var(--infra-border);
+    padding: 14px 18px; margin: 22px 0; border-radius: 4px;
+  }
+  .infra-callout .callout-title { color: #0a3069; }
+  .good-callout {
+    background: var(--good-bg);
+    border-left: 4px solid var(--good-border);
+    padding: 12px 16px; margin: 18px 0; border-radius: 4px;
+  }
+  .warn-callout {
+    background: var(--warn-bg);
+    border-left: 4px solid var(--warn-border);
+    padding: 12px 16px; margin: 18px 0; border-radius: 4px;
+  }
+  .qa-callout {
+    background: var(--qa-bg);
+    border-left: 4px solid var(--qa-border);
+    padding: 14px 18px; margin: 22px 0; border-radius: 4px;
+  }
+  .qa-callout .qa-q { font-weight: 600; color: #6f42c1; margin-bottom: 8px; }
+  table { border-collapse: collapse; width: 100%; margin: 18px 0; font-size: 14.5px; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: #f6f8fa; font-weight: 600; }
+  ul, ol { padding-left: 28px; }
+  li { margin: 6px 0; }
+  .toc {
+    background: #fff; border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px 22px; margin: 28px 0; font-size: 14.5px;
+  }
+  .toc-title { font-weight: 600; margin-bottom: 6px; color: var(--muted); font-size: 13px; letter-spacing: 0.5px; }
+  .toc ol { padding-left: 22px; margin: 6px 0; }
+  .tag {
+    display: inline-block; background: #f6f8fa; border: 1px solid var(--border);
+    border-radius: 12px; padding: 1px 10px; font-size: 12px; color: var(--muted); margin-right: 6px;
+  }
+  hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+  .ascii {
+    font-family: "SF Mono", Menlo, Consolas, monospace; white-space: pre;
+    background: #fff; border: 1px dashed var(--border); padding: 14px;
+    border-radius: 6px; font-size: 13px; line-height: 1.5; overflow-x: auto;
+  }
+  .fig-caption { font-size: 13px; color: var(--muted); margin-top: 6px; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>PagedAttention 论文精读：vLLM 如何用 OS 分页思想把 KV Cache 利用率从 20% 拉到 96%</h1>
+<div class="subtitle">— SOSP'23 论文逐节拆解 + 面试高频 Q&A</div>
+<div class="meta">
+  <span class="tag">学习笔记</span>
+  <span class="tag">AI Infra</span>
+  <span class="tag">推理引擎</span>
+  <span class="tag">PagedAttention</span>
+  <span class="tag">vLLM</span>
+  <span class="tag">SOSP'23</span>
+  <span class="tag">Stage 1 / Week 2</span>
+</div>
+
+<div class="toc">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#sec1">1. 论文概览：一句话说清楚在干什么</a></li>
+    <li><a href="#sec2">2. 问题：三种内存浪费（§3）</a></li>
+    <li><a href="#sec3">3. 核心方案：PagedAttention（§4.1）</a></li>
+    <li><a href="#sec4">4. 为什么分 block 算 attention 数学上等价</a></li>
+    <li><a href="#sec5">5. KV Cache Manager：block 的生命周期（§4.2-4.3）</a></li>
+    <li><a href="#sec6">6. 高级场景：Parallel Sampling / Beam Search / Shared Prefix（§4.4）</a></li>
+    <li><a href="#sec7">7. 调度与抢占（§4.5）</a></li>
+    <li><a href="#sec8">8. Continuous Batching 与 PagedAttention 的关系</a></li>
+    <li><a href="#sec9">9. 与 FlashAttention 的关系</a></li>
+    <li><a href="#sec10">10. 核心实验数据</a></li>
+    <li><a href="#sec11">11. OS 概念到 vLLM 的完整映射表</a></li>
+    <li><a href="#sec12">12. ⭐ 学习过程高频卡点答疑（15 个 Q）</a></li>
+    <li><a href="#sec13">13. 参考资料</a></li>
+  </ol>
+</div>
+
+<!-- ===================== -->
+<h2 id="sec1">1. 论文概览：一句话说清楚在干什么</h2>
+
+<div class="good-callout">
+  <div class="callout-title">一句话总结</div>
+  现有 LLM 推理系统因为 KV Cache 的连续存储要求，导致严重碎片化（有效利用率仅 20.4%），限制了并发批处理大小和吞吐。vLLM 借鉴 OS 虚拟内存分页思想，将 KV Cache 切成固定大小的 block、通过 block table 间接寻址，使利用率达到 96.3%，吞吐提升 2-4×。
+</div>
+
+<table>
+  <thead><tr><th>项</th><th>信息</th></tr></thead>
+  <tbody>
+    <tr><td>论文标题</td><td>Efficient Memory Management for Large Language Model Serving with PagedAttention</td></tr>
+    <tr><td>会议</td><td>SOSP'23（系统顶会）</td></tr>
+    <tr><td>一作</td><td>Woosuk Kwon（UC Berkeley）</td></tr>
+    <tr><td>通讯</td><td>Ion Stoica（Spark/Ray 创始人）</td></tr>
+    <tr><td>arxiv</td><td><a href="https://arxiv.org/abs/2309.06180">2309.06180</a></td></tr>
+    <tr><td>代码</td><td><a href="https://github.com/vllm-project/vllm">github.com/vllm-project/vllm</a></td></tr>
+  </tbody>
+</table>
+
+<!-- ===================== -->
+<h2 id="sec2">2. 问题：三种内存浪费（§3）</h2>
+
+<p>现有系统将每个请求的 KV Cache 存储在<b>连续内存空间</b>中，按<b>最大可能序列长度</b>预分配。这带来三种浪费：</p>
+
+<table>
+  <thead><tr><th>浪费类型</th><th>原文术语</th><th>含义</th></tr></thead>
+  <tbody>
+    <tr><td>① 预留槽位</td><td>Reserved slots</td><td>为未来可能生成的 token 预留空间。在请求整个生命周期内被独占，不能被其他请求利用。</td></tr>
+    <tr><td>② 内部碎片</td><td>Internal fragmentation</td><td>请求实际生成的 token 数少于最大长度，剩余预分配空间永远不会被使用（只有请求结束后才知道浪费了多少）。</td></tr>
+    <tr><td>③ 外部碎片</td><td>External fragmentation</td><td>不同请求的预分配块大小不同，释放后产生大小不一的空洞。新请求即使总空闲内存够也可能找不到足够大的连续空间。</td></tr>
+  </tbody>
+</table>
+
+<div class="warn-callout">
+  <div class="callout-title">⚠ 量化数据（必背）</div>
+  <ul>
+    <li>Orca(Max)：有效利用率仅 <b>20.4%</b></li>
+    <li>Orca(Pow2)：26.8%</li>
+    <li>Orca(Oracle)（理想化，事先知道精确长度）：57.3%（仍有外部碎片）</li>
+    <li>vLLM：<b>96.3%</b></li>
+  </ul>
+</div>
+
+<div class="callout">
+  <div class="callout-title">注意区分</div>
+  "冗余复制"（多序列间无法共享 KV）是论文 §4.3-4.4 讨论的另一个问题，解决手段是 reference counting + CoW。它<b>不属于</b> §3 定义的三种内存浪费。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec3">3. 核心方案：PagedAttention（§4.1）</h2>
+
+<h3>核心 idea</h3>
+<p>将每个序列的 KV Cache 划分为固定大小的 <b>KV block</b>（默认每个 block 存 16 个 token 的 K 和 V），这些 block 在物理显存中<b>不必连续</b>。通过 <b>block table</b>（等价于 OS 页表）记录逻辑 block → 物理 block 的映射。</p>
+
+<h3>类比 OS</h3>
+<table>
+  <thead><tr><th>OS 概念</th><th>vLLM 对应</th></tr></thead>
+  <tbody>
+    <tr><td>物理页 (physical page)</td><td>物理 KV block</td></tr>
+    <tr><td>虚拟地址空间</td><td>序列的逻辑 KV 位置</td></tr>
+    <tr><td>页表 (page table)</td><td>block table</td></tr>
+    <tr><td>按需分页 (demand paging)</td><td>按需分配 KV block</td></tr>
+    <tr><td>字节 (byte)</td><td>token</td></tr>
+    <tr><td>进程 (process)</td><td>请求 (request)</td></tr>
+  </tbody>
+</table>
+
+<h3>PagedAttention Kernel 做了什么</h3>
+<p>标准 attention kernel 假设 K/V 在内存中连续排列。PagedAttention kernel 多了一步<b>间接寻址</b>：</p>
+<ol>
+  <li>查 block table 得到各物理 block 地址</li>
+  <li>从不连续的物理地址逐 block 加载 K/V</li>
+  <li>逐 block 计算 raw score（q · K_block / √d）</li>
+  <li>所有 block 的 score 做<b>全局 softmax</b></li>
+  <li>用 softmax 权重对所有 block 的 V 加权求和</li>
+</ol>
+<p>数学结果与标准 attention <b>完全等价</b>。</p>
+
+<!-- ===================== -->
+<h2 id="sec4">4. 为什么分 block 算 attention 数学上等价</h2>
+
+<h3>论文公式（§4.1 公式 4）</h3>
+
+<p>$$A_{ij} = \frac{\exp(q_i^\top K_j / \sqrt{d})}{\sum_{l=1}^{\lceil T/B \rceil} \exp(q_i^\top K_l / \sqrt{d})} , \quad o_i = \sum_{j=1}^{\lceil T/B \rceil} V_j A_{ij}^\top$$</p>
+
+<p>其中 $K_j$ 是第 j 个 block 的所有 Key 向量，$B$ 是 block size。</p>
+
+<h3>拆开看（用人话讲）</h3>
+
+<p>假设序列 10 个 token，block_size = 4，切成 3 个 block：</p>
+
+<pre><code>Block 0: token 0,1,2,3 的 K/V
+Block 1: token 4,5,6,7 的 K/V
+Block 2: token 8,9 的 K/V（没填满）
+</code></pre>
+
+<p>标准 attention 做的事：</p>
+<pre><code>scores = [q·k_0, q·k_1, q·k_2, ..., q·k_9] / √d    ← 10 个 score
+weights = softmax(scores)                              ← 对 10 个分数归一化
+out = Σ weights[i] * v_i                              ← 加权求和
+</code></pre>
+
+<p>PagedAttention 做的事（等价改写）：</p>
+<pre><code># Step 1：逐 block 算 raw score（不做 softmax！）
+scores_block0 = [q·k_0, q·k_1, q·k_2, q·k_3] / √d
+scores_block1 = [q·k_4, q·k_5, q·k_6, q·k_7] / √d
+scores_block2 = [q·k_8, q·k_9] / √d
+
+# Step 2：拼成一条，做一次全局 softmax
+all_scores = concat(scores_block0, scores_block1, scores_block2)
+weights = softmax(all_scores)      ← 分母是全部 10 个 exp 之和
+
+# Step 3：用全局 weights 对所有 V 加权
+out = weights[0:4] · V_block0 + weights[4:8] · V_block1 + weights[8:10] · V_block2
+</code></pre>
+
+<div class="good-callout">
+  <div class="callout-title">✓ 为什么等价</div>
+  <b>本质上就是把"遍历所有 token"改写成"遍历所有 block，在每个 block 内遍历 token"</b>。这是纯粹的循环重组，不改变任何数值计算。softmax 的分母是<b>全局的</b>（所有 block 的 exp 之和），不是 block 内部的——这是正确性的关键。
+</div>
+
+<div class="warn-callout">
+  <div class="callout-title">⚠ 常见错误理解</div>
+  如果对每个 block 单独做 softmax 再拼接——那确实会错（每个 block 内部归一化的基数不一样）。<br>
+  PagedAttention <b>不是</b>这么做的。它是分块算 raw score + 局部 exp sum，最后做一次全局归一化。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec5">5. KV Cache Manager：block 的生命周期（§4.2-4.3）</h2>
+
+<h3>组件结构</h3>
+<ul>
+  <li><b>Block Pool</b>：GPU 上预分配的一块连续显存，划分为固定数量的物理 KV block</li>
+  <li><b>Block Table</b>：每个请求一张，记录逻辑 block → 物理 block 的映射 + 每个 block 已填充 token 数</li>
+  <li><b>Block Allocator</b>：管理 block 的分配与释放（GPU 端 + CPU 端各一个）</li>
+</ul>
+
+<h3>Block 生命周期（4 步）</h3>
+
+<table>
+  <thead><tr><th>步骤</th><th>发生什么</th><th>Block 状态</th></tr></thead>
+  <tbody>
+    <tr><td>① 新请求到达（Prefill）</td><td>prompt 的 KV 一次性计算，按 block_size 填入物理 block。最后一个 block 可能没填满。</td><td>从 pool 分配 N 个 block</td></tr>
+    <tr><td>② Decode 生成中</td><td>新 token 的 KV 填入最后一个 block 的空位</td><td>最后一个 block 的 #filled + 1</td></tr>
+    <tr><td>③ 最后一个 block 满了</td><td>从 pool 申请新的物理 block，block table 追加一行</td><td>新 block 加入</td></tr>
+    <tr><td>④ 请求结束（EOS）</td><td>所有物理 block 归还到 pool</td><td>全部释放</td></tr>
+  </tbody>
+</table>
+
+<p><b>唯一的内部碎片</b>：最后一个 block 可能没填满（最多浪费 block_size - 1 = 15 个 token 的空间）。整体来看极小——相比之前 80% 的浪费，这点代价几乎可忽略。</p>
+
+<!-- ===================== -->
+<h2 id="sec6">6. 高级场景：Parallel Sampling / Beam Search / Shared Prefix（§4.4）</h2>
+
+<h3>6.1 Parallel Sampling（并行采样）</h3>
+<p>同一 prompt 生成多个回答时：</p>
+<ul>
+  <li>所有 sample 共享 prompt 部分的物理 KV block（通过 <b>reference count</b> 管理）</li>
+  <li>只有各自生成的后续 token 占独立 block</li>
+  <li>当某 sample 要修改一个 ref_count > 1 的 block 时，触发 <b>Copy-on-Write</b></li>
+</ul>
+
+<h3>6.2 Beam Search</h3>
+<p>多个 beam 共享不同长度的公共前缀，共享模式随解码动态变化（类似 OS 的进程树）。</p>
+
+<p><b>CoW 触发条件</b>：某条 beam 要向一个 ref_count > 1 的 block 写入新数据时。</p>
+
+<p><b>触发后发生什么</b>：</p>
+<ol>
+  <li>复制该 block 为新物理 block</li>
+  <li>该 beam 的 block table 改指向新 block</li>
+  <li>原 block 的 ref_count - 1</li>
+  <li>在新 block 上写入新 token</li>
+</ol>
+
+<p><b>只 copy 被修改的那一个 block</b>，不是整段 KV Cache——这就是 CoW 的核心价值。跟 Unix fork() 完全一致。</p>
+
+<h3>6.3 Shared Prefix（共享前缀 / System Prompt）</h3>
+<p>多用户共享相同 system prompt 时，前缀的 KV block 全局只存一份。新请求直接将逻辑 block 映射到已有物理 block。类似 OS 中进程间共享动态库。</p>
+
+<!-- ===================== -->
+<h2 id="sec7">7. 调度与抢占（§4.5）</h2>
+
+<h3>调度策略</h3>
+<ul>
+  <li>采用 <b>FCFS（先来先服务）</b>，保证公平性、防止饥饿</li>
+  <li>配合迭代级调度（继承自 Orca）：每个 decode step 重新评估 batch 组成</li>
+  <li>抢占时优先抢占<b>最后到达的请求</b>（保证先到的不被饿死）</li>
+</ul>
+
+<h3>当显存不够时：两种抢占策略</h3>
+
+<table>
+  <thead><tr><th>策略</th><th>做法</th><th>适合场景</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>Swapping（交换）</b></td>
+      <td>将被抢占请求的 KV block 从 GPU 复制到 CPU 内存。GPU 空闲后再换回。</td>
+      <td>CPU 内存充裕、KV cache 体量中等</td>
+    </tr>
+    <tr>
+      <td><b>Recomputation（重计算）</b></td>
+      <td>直接丢弃被抢占请求的 KV cache。等有资源后重新跑 Prefill（将原始 prompt + 已生成 token 合并重算 KV）。</td>
+      <td>prompt 短（重算代价低）、CPU 内存紧张</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <div class="callout-title">为什么 FCFS 不会饿死短请求？</div>
+  FCFS 是先到先做，<b>不是长请求优先</b>。如果显存不够：抢占的是<b>最后到达的请求</b>（而不是短请求），保证先到的请求不被后来者挤掉。所以不存在"长请求饿死短请求"的问题——反而是后来的请求可能被暂时 swap/recompute。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec8">8. Continuous Batching 与 PagedAttention 的关系</h2>
+
+<table>
+  <thead><tr><th></th><th>Continuous Batching</th><th>PagedAttention</th></tr></thead>
+  <tbody>
+    <tr><td>解决什么</td><td>调度问题（请求什么时候进出 batch）</td><td>内存管理问题（KV Cache 怎么存）</td></tr>
+    <tr><td>核心机制</td><td>每 decode step 重新组 batch，请求结束立刻换上新的</td><td>KV Cache 分 block + block table 映射</td></tr>
+    <tr><td>没有对方能不能工作</td><td>能（Orca 就是有 CB 没有 PA）</td><td>能（可以不做 CB 只用 PA 管内存）</td></tr>
+    <tr><td>但效果差</td><td>没 PA → 碎片严重 → batch 放不满</td><td>没 CB → 请求进出不灵活 → GPU 空转</td></tr>
+  </tbody>
+</table>
+
+<div class="good-callout">
+  <div class="callout-title">✓ 一句话</div>
+  Continuous Batching 管"谁进谁出"，PagedAttention 管"进来的人住哪"。两者正交、配合使用效果最大。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec9">9. 与 FlashAttention 的关系</h2>
+
+<table>
+  <thead><tr><th></th><th>FlashAttention</th><th>PagedAttention</th></tr></thead>
+  <tbody>
+    <tr><td>解决什么</td><td>单次 attention 计算的 HBM 读写量（IO 效率）</td><td>多请求 KV Cache 的显存布局（内存管理）</td></tr>
+    <tr><td>手段</td><td>Tiling（分块计算 + 不保存中间结果到 HBM）</td><td>分页（非连续存储 + block table 间接寻址）</td></tr>
+    <tr><td>优化层面</td><td>一次 matmul 内部的数据搬运</td><td>多请求间的内存分配/释放/共享</td></tr>
+    <tr><td>能一起用吗？</td><td colspan="2"><b>能，且 vLLM 实际就是两者结合</b>——PagedAttention kernel 内部采用 FlashAttention 风格的 tiling 减少 HBM 读写</td></tr>
+  </tbody>
+</table>
+
+<!-- ===================== -->
+<h2 id="sec10">10. 核心实验数据</h2>
+
+<table>
+  <thead><tr><th>对比维度</th><th>数据</th></tr></thead>
+  <tbody>
+    <tr><td>vLLM vs FasterTransformer</td><td>吞吐高 <b>14-24×</b></td></tr>
+    <tr><td>vLLM vs Orca (最优配置)</td><td>吞吐高 <b>2.2-4.3×</b></td></tr>
+    <tr><td>KV Cache 有效利用率</td><td>vLLM <b>96.3%</b> vs Orca(Max) <b>20.4%</b></td></tr>
+    <tr><td>Beam Search (width=6)</td><td>vLLM 比 Orca 吞吐高 <b>2.3×</b></td></tr>
+    <tr><td>PagedAttention kernel 额外开销</td><td><b>&lt; 5%</b></td></tr>
+    <tr><td>最优 block_size</td><td><b>16</b>（消融实验 16-32 最优区间）</td></tr>
+  </tbody>
+</table>
+
+<!-- ===================== -->
+<h2 id="sec11">11. OS 概念到 vLLM 的完整映射表</h2>
+
+<table>
+  <thead><tr><th>OS 概念</th><th>vLLM 对应</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>物理页</td><td>物理 KV block</td><td>固定大小（16 token），存储在 block pool 中</td></tr>
+    <tr><td>虚拟页</td><td>逻辑 KV block</td><td>按序列位置编号：0, 1, 2, ...</td></tr>
+    <tr><td>页表</td><td>block table</td><td>每个请求一张，逻辑→物理映射</td></tr>
+    <tr><td>按需分页</td><td>按需分配 block</td><td>最后一个 block 满了才申请新 block</td></tr>
+    <tr><td>Copy-on-Write</td><td>Beam Search / Parallel Sampling 共享</td><td>ref_count > 1 时写入触发 copy</td></tr>
+    <tr><td>Swap to disk</td><td>Swap to CPU memory</td><td>被抢占请求的 KV block 暂存 CPU</td></tr>
+    <tr><td>共享动态库</td><td>Shared Prefix / Prefix Caching</td><td>多请求共享同一 system prompt 的 KV block</td></tr>
+    <tr><td>进程</td><td>请求 (request)</td><td>独立的逻辑地址空间</td></tr>
+    <tr><td>字节</td><td>token</td><td>寻址的最小单位</td></tr>
+  </tbody>
+</table>
+
+<!-- ===================== -->
+<h2 id="sec12">12. ⭐ 学习过程高频卡点答疑（15 个 Q）</h2>
+
+<div class="qa-callout">
+  <div class="qa-q">Q1：PagedAttention 解决的核心问题是什么？</div>
+  现有系统因 KV Cache 的连续存储要求导致严重碎片化和共享困难，有效利用率仅 20%，限制了并发批处理大小和吞吐。PagedAttention 通过分页管理消除碎片、支持共享，将利用率提升到 96%。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q2：三种内存浪费？</div>
+  ① <b>Reserved slots</b>：为未来 token 预留的空间，请求期间被独占。② <b>Internal fragmentation</b>：预分配空间中永远不会被用到的部分（请求提前结束）。③ <b>External fragmentation</b>：不同请求释放后留下大小不一的空洞，新请求找不到连续大块。注意："冗余复制"不在这三种之内。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q3：Block Table 的作用？对应 OS 什么概念？</div>
+  记录逻辑 block 到物理 block 的映射 + 每个 block 的填充数。等价于 OS 页表。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q4：vLLM 利用率 vs Orca(Max)？</div>
+  <b>96.3%</b> vs <b>20.4%</b>。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q5：block_size = 16 意味着什么？为什么不用 1 或 128？</div>
+  每个 block 存 16 个 token 的 KV。太小→block table 膨胀 + kernel 效率低（warp 利用率低）；太大→内部碎片增多。16-32 是消融实验验证的最优区间。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q6：哪个阶段用到 PagedAttention 的分块读取？</div>
+  <b>Decode 阶段</b>。Prefill 是一次性并行计算所有位置的 KV（此时是"建立 cache"），不需要从不连续 block 里读历史 KV。Decode 每步要读取全部历史 KV → 需要 PagedAttention kernel 按 block table 寻址。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q7：请求结束后 KV block 怎么处理？有相同前缀的新请求呢？</div>
+  归还到全局 block pool。如果有 Prefix Caching：前缀 block 通过 hash 匹配保留在 pool 中不立即释放，新请求命中 hash 直接复用。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q8：Beam Search 中 CoW 什么时候触发？触发后发生什么？</div>
+  触发条件：某 beam 要向一个 ref_count > 1 的 block 写入数据。触发后：①复制该 block 为新物理 block ②该 beam 的 block table 改指向新 block ③原 block ref_count - 1 ④在新 block 上写入。<b>只 copy 被修改的那一个 block</b>，不是整段 KV。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q9：为什么分 block 算再全局 softmax 跟连续算等价？</div>
+  因为 softmax 分母 = 所有位置的 exp 之和。分 block 算时，每个 block 贡献"局部 exp sum"，汇总后得到的全局分母与一次性算完全一致。本质是"把逐 token 遍历改写为逐 block 遍历"，纯循环重组，数值零误差。<b>不是对每个 block 单独做 softmax 再拼接</b>（那样确实会错）。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q10：Continuous Batching 跟 PagedAttention 什么关系？</div>
+  两者正交。CB 管调度（请求何时进出 batch），PA 管内存（KV 怎么存）。没有 PA 也能做 CB（Orca 就是），但效果差——碎片严重导致 batch 放不满。两者配合才能发挥最大威力。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q11：block_size=16，请求生成 17 个 token，浪费多少？重要吗？</div>
+  第 2 个 block 只填了 1 个 token，浪费 15 个 token 的空间。整体不重要：每个请求最多浪费 block_size-1 个 token，相比几百~几千 token 的请求总量，占比极低（<3%）。且所有 block 大小相同→零外部碎片。用极小的内部碎片换来了零外部碎片，trade-off 非常划算。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q12：PagedAttention kernel 比标准 kernel 多了什么开销？大吗？</div>
+  多了 block table lookup（间接寻址）。实测额外开销 <b>&lt; 5%</b>，相比之前 80% 的显存浪费可忽略。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q13：显存不够时两种抢占策略？</div>
+  ① <b>Swapping</b>：把被抢占请求的 KV block 从 GPU 复制到 CPU 内存，有空间后再换回。适合 CPU 内存充裕。② <b>Recomputation</b>：直接丢弃 KV cache，等有资源后重新跑 Prefill。适合 prompt 短（重算代价低）、CPU 内存紧张。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q14：FCFS 会不会饿死短请求？</div>
+  不会。FCFS 是先到先做。显存不够时抢占的是<b>最后到达的请求</b>（不是短请求），保证先到的不被饿死。后来的请求可能被暂时 swap/recompute，等资源释放后恢复。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q15：PagedAttention 跟 FlashAttention 能一起用吗？</div>
+  能。两者正交：FlashAttention 优化单次 attention 的 HBM 读写（tiling），PagedAttention 优化多请求 KV Cache 的内存布局。vLLM 的 PagedAttention kernel 内部可采用 FlashAttention 风格的 tiling 进一步减少 HBM 读写。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec13">13. 参考资料</h2>
+
+<ul>
+  <li>论文原文：<a href="https://arxiv.org/abs/2309.06180" target="_blank">arxiv.org/abs/2309.06180</a></li>
+  <li>vLLM 仓库：<a href="https://github.com/vllm-project/vllm" target="_blank">github.com/vllm-project/vllm</a>（重点看 <code>vllm/v1/core/</code>）</li>
+  <li>上一篇博客：<a href="06-kv-cache-from-zero.html">06 · KV Cache 从 0 到 1</a></li>
+  <li>下一篇预告：<b>博客 08 · vLLM 调度器源码解读</b>（逐行读 <code>vllm/v1/core/sched/</code>）</li>
+</ul>
+
+<hr>
+
+<p style="color: var(--muted); font-size: 13.5px;">
+  这是 <b>Stage 1 / Week 2</b> 的第一篇，对应 AI Infra 转型学习计划"精读 vLLM 论文"任务。
+</p>
+
+</body>
+</html>
