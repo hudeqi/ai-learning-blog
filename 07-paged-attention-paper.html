@@ -420,6 +420,62 @@ out = weights[0:4] · V_block0 + weights[4:8] · V_block1 + weights[8:10] · V_b
   </tbody>
 </table>
 
+<h3>什么是 HBM 读写？</h3>
+
+<p><b>HBM（High Bandwidth Memory）</b>就是 GPU 的主显存（"A100 有 80GB 显存"说的就是 HBM）。GPU 的内存层次类似 CPU：</p>
+
+<table>
+  <thead><tr><th>层次</th><th>GPU 上叫什么</th><th>大小</th><th>带宽</th></tr></thead>
+  <tbody>
+    <tr><td>寄存器</td><td>Register File</td><td>~几 KB/SM</td><td>最快</td></tr>
+    <tr><td>L1 / 共享内存</td><td>SRAM (Shared Memory)</td><td>每 SM 192KB（A100）</td><td>~19 TB/s</td></tr>
+    <tr><td><b>主显存</b></td><td><b>HBM</b></td><td>40-80 GB</td><td><b>2 TB/s</b></td></tr>
+  </tbody>
+</table>
+
+<p><b>关键差距</b>：SRAM 比 HBM 快约 10 倍，但容量小 1000 倍。</p>
+
+<h3>"单次 attention 的 HBM 读写"到底指什么</h3>
+
+<p>做一次 <code>softmax(Q @ K^T / √d) @ V</code> 计算，标准实现的数据搬运过程：</p>
+
+<pre><code>1. 从 HBM 读出 Q           (T×d)
+2. 从 HBM 读出 K           (T×d)
+3. 计算 Q @ K^T → score    (T×T)
+4. 把 score 写回 HBM        ← SRAM 放不下 T×T 矩阵！
+5. 从 HBM 重新读出 score
+6. 做 softmax → weights    (T×T)
+7. 把 weights 写回 HBM      ← 又放不下
+8. 从 HBM 重新读出 weights
+9. 从 HBM 读出 V           (T×d)
+10. 计算 weights @ V → output
+11. 把 output 写回 HBM
+</code></pre>
+
+<p><b>总 HBM 读写量</b>：读 3Td + 2T²，写 2T² + Td → 总量 $\mathcal{O}(T^2 + Td)$</p>
+
+<p>当 T=4096, d=128 时：$T^2 = 16M$ 元素，<b>大部分时间 GPU 在等数据从 HBM 搬过来，算力空转</b>。</p>
+
+<h3>FlashAttention 如何解决</h3>
+
+<p><b>核心 idea</b>：不把中间结果（score、weights 这两个 T×T 矩阵）写回 HBM。</p>
+
+<p>做法：<b>Tiling（分块计算）</b>——把 Q/K/V 切成小块，每次只在 SRAM 里处理一小块，在 SRAM 内部完成 softmax 的部分计算，中间结果不落地到 HBM。</p>
+
+<table>
+  <thead><tr><th></th><th>标准 Attention</th><th>FlashAttention</th></tr></thead>
+  <tbody>
+    <tr><td>HBM 读写量</td><td>$\mathcal{O}(T^2 + Td)$</td><td><b>$\mathcal{O}(Td)$</b></td></tr>
+    <tr><td>T=4096, d=128</td><td>~34M 元素</td><td>~2M 元素</td></tr>
+    <tr><td>加速比</td><td>基准</td><td><b>2-4×</b>（主要是省了 HBM 搬运时间）</td></tr>
+  </tbody>
+</table>
+
+<div class="good-callout">
+  <div class="callout-title">✓ 两者叠加</div>
+  vLLM 的 PagedAttention kernel 内部用 FlashAttention 风格的 tiling：既从不连续 block 读数据（PA 的贡献——省空间），又不把中间结果写回 HBM（FA 的贡献——省带宽）。<b>空间效率 + IO 效率同时拉满。</b>
+</div>
+
 <!-- ===================== -->
 <h2 id="sec10">10. 核心实验数据</h2>
 
