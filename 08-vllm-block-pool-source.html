@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>vLLM 源码精读：block_pool.py —— PagedAttention 的灵魂组件 — 学习笔记</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  :root {
+    --bg: #fbfaf7; --fg: #1f2328; --muted: #57606a; --accent: #0969da;
+    --accent2: #8250df; --code-bg: #f6f8fa; --code-fg: #24292f; --border: #d0d7de;
+    --callout-bg: #fff8c5; --callout-border: #d4a72c; --infra-bg: #ddf4ff;
+    --infra-border: #54aeff; --good-bg: #dafbe1; --good-border: #4ac26b;
+    --qa-bg: #fbefff; --qa-border: #a371f7; --warn-bg: #ffebe9; --warn-border: #cf222e;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--fg); line-height: 1.78;
+    max-width: 900px; margin: 0 auto; padding: 44px 28px 96px; font-size: 16px;
+  }
+  h1 { font-size: 30px; border-bottom: 2px solid var(--border); padding-bottom: 14px; margin-bottom: 6px; line-height: 1.35; }
+  .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 8px; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 36px; }
+  h2 { font-size: 23px; margin-top: 52px; border-left: 4px solid var(--accent); padding-left: 12px; }
+  h3 { font-size: 18px; margin-top: 30px; color: var(--accent2); }
+  p { margin: 14px 0; }
+  code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px;
+    font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 14px; color: #cf222e; }
+  pre { background: var(--code-bg); color: var(--code-fg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px 18px; overflow-x: auto; font-size: 13.5px; line-height: 1.6; }
+  pre code { background: transparent; padding: 0; color: inherit; font-size: 13.5px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  blockquote { border-left: 4px solid var(--border); color: var(--muted); padding: 4px 14px; margin: 18px 0; background: #fff; }
+  .callout { background: var(--callout-bg); border-left: 4px solid var(--callout-border); padding: 12px 16px; margin: 18px 0; border-radius: 4px; }
+  .callout-title { font-weight: 600; margin-bottom: 4px; }
+  .infra-callout { background: var(--infra-bg); border-left: 4px solid var(--infra-border); padding: 14px 18px; margin: 22px 0; border-radius: 4px; }
+  .infra-callout .callout-title { color: #0a3069; }
+  .good-callout { background: var(--good-bg); border-left: 4px solid var(--good-border); padding: 12px 16px; margin: 18px 0; border-radius: 4px; }
+  .warn-callout { background: var(--warn-bg); border-left: 4px solid var(--warn-border); padding: 12px 16px; margin: 18px 0; border-radius: 4px; }
+  .qa-callout { background: var(--qa-bg); border-left: 4px solid var(--qa-border); padding: 14px 18px; margin: 22px 0; border-radius: 4px; }
+  .qa-callout .qa-q { font-weight: 600; color: #6f42c1; margin-bottom: 8px; }
+  table { border-collapse: collapse; width: 100%; margin: 18px 0; font-size: 14.5px; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: #f6f8fa; font-weight: 600; }
+  ul, ol { padding-left: 28px; }
+  li { margin: 6px 0; }
+  .toc { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 16px 22px; margin: 28px 0; font-size: 14.5px; }
+  .toc-title { font-weight: 600; margin-bottom: 6px; color: var(--muted); font-size: 13px; letter-spacing: 0.5px; }
+  .toc ol { padding-left: 22px; margin: 6px 0; }
+  .tag { display: inline-block; background: #f6f8fa; border: 1px solid var(--border); border-radius: 12px; padding: 1px 10px; font-size: 12px; color: var(--muted); margin-right: 6px; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+  .ascii { font-family: "SF Mono", Menlo, Consolas, monospace; white-space: pre; background: #fff; border: 1px dashed var(--border); padding: 14px; border-radius: 6px; font-size: 13px; line-height: 1.5; overflow-x: auto; }
+</style>
+</head>
+<body>
+
+<h1>vLLM 源码精读：block_pool.py —— PagedAttention 的灵魂组件</h1>
+<div class="subtitle">— 逐方法拆解 vLLM V1 的物理 block 管理器</div>
+<div class="meta">
+  <span class="tag">源码精读</span>
+  <span class="tag">AI Infra</span>
+  <span class="tag">vLLM V1</span>
+  <span class="tag">PagedAttention</span>
+  <span class="tag">block_pool.py</span>
+  <span class="tag">Stage 1 / Week 2</span>
+</div>
+
+<div class="toc">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#sec1">1. 文件定位：block_pool.py 在整个 vLLM 中的角色</a></li>
+    <li><a href="#sec2">2. 全局架构图：两个类，三个核心数据结构</a></li>
+    <li><a href="#sec3">3. BlockHashToBlockMap：Prefix Cache 的索引</a></li>
+    <li><a href="#sec4">4. BlockPool.__init__：初始化时发生了什么</a></li>
+    <li><a href="#sec5">5. get_new_blocks：从 pool 里拿空闲 block</a></li>
+    <li><a href="#sec6">6. free_blocks：释放 block（但不一定真删）</a></li>
+    <li><a href="#sec7">7. touch：Prefix Cache 命中时的处理</a></li>
+    <li><a href="#sec8">8. cache_full_blocks：block 写满后注册到 hash map</a></li>
+    <li><a href="#sec9">9. _maybe_evict_cached_block：延迟驱逐（Lazy Eviction）</a></li>
+    <li><a href="#sec10">10. null_block：一个特殊的占位 block</a></li>
+    <li><a href="#sec11">11. 论文到代码的完整映射</a></li>
+    <li><a href="#sec12">12. ⭐ 高频卡点答疑（8 个 Q）</a></li>
+    <li><a href="#sec13">13. 参考资料</a></li>
+  </ol>
+</div>
+
+<!-- ===================== -->
+<h2 id="sec1">1. 文件定位：block_pool.py 在整个 vLLM 中的角色</h2>
+
+<p>vLLM V1 的 KV Cache 管理分三层：</p>
+
+<div class="ascii">┌─────────────────────────────────────────────────┐
+│  kv_cache_manager.py（上层，面向请求）            │
+│  - 每个请求维护一张 block table                   │
+│  - 决定什么时候分配/释放/fork/swap                │
+├─────────────────────────────────────────────────┤
+│  block_pool.py（本文，面向物理 block）      ⬅ 今天读这个
+│  - 管理全局物理 block 池                          │
+│  - 分配/释放/引用计数/Prefix Cache 索引           │
+├─────────────────────────────────────────────────┤
+│  kv_cache_utils.py（底层，数据结构定义）           │
+│  - KVCacheBlock / FreeKVCacheBlockQueue 等        │
+│  - block hash 计算函数                            │
+└─────────────────────────────────────────────────┘</div>
+
+<p><b>block_pool.py 对应论文 §4.2 KV Cache Manager 中的 Block Allocator</b>——管理物理 block 的分配、释放、引用计数和 Prefix Cache 索引。它不关心"哪个请求用了哪个 block"（那是上层 kv_cache_manager 的事），只关心"物理 block 池子里还有多少空闲、谁能复用"。</p>
+
+<div class="infra-callout">
+  <div class="callout-title">🔧 Kafka 类比</div>
+  block_pool.py 的角色类似 Kafka 里的 <b>LogSegment 文件管理</b>——管理物理存储单元的分配/回收/索引，不关心上层 Partition 的逻辑映射。上层 kv_cache_manager 则类似 Kafka 的 <b>ReplicaManager</b>——对外暴露请求级接口，内部调用物理存储管理。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec2">2. 全局架构图：两个类，三个核心数据结构</h2>
+
+<p>文件里有两个类：</p>
+
+<table>
+  <thead><tr><th>类</th><th>角色</th><th>对应 OS 概念</th></tr></thead>
+  <tbody>
+    <tr><td><code>BlockHashToBlockMap</code></td><td>Prefix Cache 的索引（hash → block）</td><td>文件系统的 inode cache / dentry cache</td></tr>
+    <tr><td><code>BlockPool</code></td><td>物理 block 池管理器</td><td>OS 的物理页帧分配器（buddy allocator）</td></tr>
+  </tbody>
+</table>
+
+<p>三个核心数据结构：</p>
+
+<table>
+  <thead><tr><th>数据结构</th><th>在哪里</th><th>作用</th></tr></thead>
+  <tbody>
+    <tr><td><code>self.blocks: list[KVCacheBlock]</code></td><td>BlockPool.__init__</td><td>全局物理 block 数组，按 block_id 索引。初始化时一次性创建所有 block 对象。</td></tr>
+    <tr><td><code>self.free_block_queue: FreeKVCacheBlockQueue</code></td><td>BlockPool.__init__</td><td>空闲 block 的<b>双向链表</b>。分配时从左端取（popleft），释放时追加到右端（append）或左端（prepend）。</td></tr>
+    <tr><td><code>self.cached_block_hash_to_block: BlockHashToBlockMap</code></td><td>BlockPool.__init__</td><td>hash → block 的映射。block 写满后注册进来，新请求来时先查这里看能否复用。</td></tr>
+  </tbody>
+</table>
+
+<div class="good-callout">
+  <div class="callout-title">✓ 一句话理解整个文件</div>
+  BlockPool = <b>物理 block 数组</b> + <b>空闲链表</b> + <b>hash 索引</b>。分配从空闲链表取，释放归还空闲链表，Prefix Cache 通过 hash 索引实现。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec3">3. BlockHashToBlockMap：Prefix Cache 的索引</h2>
+
+<h3>数据结构</h3>
+<pre><code>class BlockHashToBlockMap:
+    self._cache: dict[
+        BlockHashWithGroupId,              # key = (block_hash, group_id)
+        KVCacheBlock | dict[int, KVCacheBlock]  # value = 单个 block 或多个 block
+    ]</code></pre>
+
+<p><b>key 是什么？</b> <code>(block_hash, group_id)</code> 的组合。block_hash 基于 block 内 token id 序列计算，group_id 标识 KV cache 组（多头 attention 可以分组管理）。</p>
+
+<p><b>value 为什么是 union 类型？</b> 大多数情况下一个 hash 只对应一个 block（直接存 <code>KVCacheBlock</code>）。极少数情况下同一个 hash 有多个 block（存 <code>dict[block_id, KVCacheBlock]</code>）。代码注释说得很清楚：这么做是为了<b>减少 GC 开销</b>——单个 block 时不创建 dict 对象。</p>
+
+<h3>三个核心方法</h3>
+
+<table>
+  <thead><tr><th>方法</th><th>做什么</th><th>什么时候调用</th></tr></thead>
+  <tbody>
+    <tr><td><code>get_one_block(key)</code></td><td>按 hash 查找一个 block</td><td>新请求到来，查 Prefix Cache 是否命中</td></tr>
+    <tr><td><code>insert(key, block)</code></td><td>注册一个 block 到 hash map</td><td>block 写满后缓存进来</td></tr>
+    <tr><td><code>pop(key, block_id)</code></td><td>按 hash + block_id 从 map 中移除</td><td>驱逐缓存 block 时</td></tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <div class="callout-title">设计取舍</div>
+  代码注释里有一个重要的 NOTE："We currently don't de-duplicate the blocks in the cache"。意思是：<b>同一个 hash 可能有多个 block</b>（不做去重），因为要保证 block ID 不变（block table 是 append-only 的）。这是为了<b>避免修改已有请求的 block table</b>——一旦分配就不变，简化了并发管理。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec4">4. BlockPool.__init__：初始化时发生了什么</h2>
+
+<pre><code>def __init__(self, num_gpu_blocks, enable_caching, hash_block_size, ...):
+    # 1. 创建全部物理 block（一次性预分配）
+    self.blocks = [KVCacheBlock(idx) for idx in range(num_gpu_blocks)]
+
+    # 2. 全部 block 放进空闲链表
+    self.free_block_queue = FreeKVCacheBlockQueue(self.blocks)
+
+    # 3. 创建空的 hash 索引
+    self.cached_block_hash_to_block = BlockHashToBlockMap()
+
+    # 4. 取一个 block 出来作为 null_block（占位用）
+    self.null_block = self.free_block_queue.popleft()
+    self.null_block.is_null = True</code></pre>
+
+<p>几个要点：</p>
+<ul>
+  <li><b>一次性预分配</b>：所有物理 block 在 init 时就创建好（对应 GPU 侧的 block engine 预分配连续显存）。后续分配/释放只是在空闲链表上移动指针，不涉及真正的显存申请/释放。</li>
+  <li><b>null_block</b>：从 pool 里拿出 1 个 block 作为占位符（详见 §10）。这意味着实际可用的 block 数 = num_gpu_blocks - 1。</li>
+  <li><b>enable_caching</b>：开关。关闭时不做 Prefix Cache（不算 hash、不查索引），分配/释放走简单路径。</li>
+</ul>
+
+<div class="infra-callout">
+  <div class="callout-title">🔧 Infra 视角</div>
+  "预分配 + 空闲链表"是经典的<b>池化（pooling）</b>模式——Kafka 的 ByteBuffer pool、Netty 的 PooledByteBufAllocator、内核的 slab allocator 都是这个思路。好处：分配 O(1)、无碎片、无 GC 压力。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec5">5. get_new_blocks：从 pool 里拿空闲 block</h2>
+
+<pre><code>def get_new_blocks(self, num_blocks: int) -> list[KVCacheBlock]:
+    # 检查空闲数量
+    if num_blocks > self.get_num_free_blocks():
+        raise ValueError(...)
+
+    # 从空闲链表左端取 n 个
+    ret = self.free_block_queue.popleft_n(num_blocks)
+
+    for block in ret:
+        # 如果开启了缓存，取出的 block 可能还带着旧 hash → 驱逐它
+        if self.enable_caching:
+            self._maybe_evict_cached_block(block)
+        assert block.ref_cnt == 0
+        block.ref_cnt += 1   # 标记为"被使用"
+    return ret</code></pre>
+
+<p><b>核心逻辑</b>：</p>
+<ol>
+  <li>从空闲链表的<b>左端</b>取 block（FIFO 顺序——最早释放的最先被重新分配）</li>
+  <li>如果开了 Prefix Cache，取出来的 block 可能<b>还在 hash map 里</b>（lazy eviction 的结果）——此时要先把它从 hash map 清除</li>
+  <li>ref_cnt 从 0 变为 1</li>
+</ol>
+
+<div class="warn-callout">
+  <div class="callout-title">⚠ 关键设计：Lazy Eviction 的代价在这里付</div>
+  释放 block 时不急着从 hash map 删除（期望未来还能命中）。但当 block 被重新分配给新请求时，<b>必须把旧 hash 清掉</b>——否则新数据写进去后，旧 hash 指向的 block 内容已经变了，Prefix Cache 会返回错误结果。<code>_maybe_evict_cached_block</code> 就是在这里做的"延迟清理"。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec6">6. free_blocks：释放 block（但不一定真删）</h2>
+
+<pre><code>def free_blocks(self, ordered_blocks, prepend=False):
+    for block in blocks_list:
+        block.ref_cnt -= 1         # 引用计数减 1
+
+    # 只有 ref_cnt 真正到 0 的才放回空闲链表
+    freed_blocks = [
+        block for block in blocks_list
+        if block.ref_cnt == 0 and not block.is_null
+    ]
+
+    if prepend:
+        self.free_block_queue.prepend_n(freed_blocks)  # 放到队列前端（优先被重用）
+    else:
+        self.free_block_queue.append_n(freed_blocks)   # 放到队列尾部（最后被重用）</code></pre>
+
+<p><b>核心逻辑</b>：</p>
+<ol>
+  <li><b>ref_cnt - 1</b>，不是直接释放。如果还有其他序列引用（Beam Search / Parallel Sampling 共享），减完后 ref_cnt > 0，不释放。</li>
+  <li>ref_cnt 到 0 才真正归还空闲链表。</li>
+  <li><b>不从 hash map 删除</b>——block 的 hash 还留着（Lazy Eviction）。下次有新请求前缀匹配时还能命中。</li>
+  <li><code>prepend</code> 参数控制优先级：prepend=True 放到队列前端，意味着会被<b>优先重新分配</b>（用于被抢占请求的 block——这些 block 不太可能被复用，优先回收）。</li>
+</ol>
+
+<div class="good-callout">
+  <div class="callout-title">✓ 理解 free 的核心</div>
+  free 不是"销毁"，是"归还"。block 对象本身永远存在（init 时就创建了，不会被 GC），只是在"被使用"和"空闲"两个状态之间切换。空闲的 block 可能还带着旧 hash 做 Prefix Cache 候选——直到被重新分配时才清除。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec7">7. touch：Prefix Cache 命中时的处理</h2>
+
+<pre><code>def touch(self, blocks: Sequence[KVCacheBlock]):
+    for block in blocks:
+        if block.ref_cnt == 0 and not block.is_null:
+            # ref_cnt=0 说明在空闲链表里（eviction candidate）
+            # 命中了 → 从空闲链表移除（不能被驱逐了）
+            self.free_block_queue.remove(block)
+        block.ref_cnt += 1</code></pre>
+
+<p><b>场景</b>：新请求到来，其前缀的 hash 在 Prefix Cache 中命中了。命中的 block 可能 ref_cnt=0（之前的请求已结束，block 在空闲链表里等待驱逐）。此时：</p>
+<ol>
+  <li>把 block 从空闲链表中<b>移除</b>（不能被驱逐了，因为有新用户了）</li>
+  <li>ref_cnt + 1</li>
+</ol>
+
+<div class="infra-callout">
+  <div class="callout-title">🔧 跟 OS Page Cache 的类比</div>
+  这跟 Linux 的 page cache 行为完全一致：文件读完后 page 进入 inactive list（类似 free_block_queue），如果再次被访问就移到 active list（从空闲链表移除）。touch = OS 的 <code>mark_page_accessed()</code>。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec8">8. cache_full_blocks：block 写满后注册到 hash map</h2>
+
+<p>这是 Prefix Cache 的<b>写入路径</b>。当一个 block 被 token 填满后，需要计算 hash 并注册到索引中。</p>
+
+<pre><code>def cache_full_blocks(self, request, blocks, num_cached_blocks,
+                      num_full_blocks, block_size, kv_cache_group_id, ...):
+    # 只处理新变满的 block（跳过已经缓存的）
+    new_full_blocks = blocks[num_cached_blocks:num_full_blocks]
+
+    for i, blk in enumerate(new_full_blocks):
+        if blk.is_null:  # 跳过空 block（SWA 等稀疏 attention 场景）
+            continue
+
+        block_hash = new_block_hashes[i]
+
+        # 给 block 打上 hash 标记
+        block_hash_with_group_id = make_block_hash_with_group_id(
+            block_hash, kv_cache_group_id)
+        blk.block_hash = block_hash_with_group_id
+
+        # 注册到 hash map
+        self.cached_block_hash_to_block.insert(
+            block_hash_with_group_id, blk)</code></pre>
+
+<p><b>核心逻辑</b>：</p>
+<ol>
+  <li>只处理区间 <code>[num_cached_blocks, num_full_blocks)</code> 里的 block——已经 cache 过的不重复处理</li>
+  <li>跳过 null block（稀疏 attention 场景如 SWA 可能有 null block）</li>
+  <li>给 block 设置 <code>block_hash</code> 属性</li>
+  <li>注册到 <code>cached_block_hash_to_block</code> hash map</li>
+  <li>如果开了 KV Cache Events（分布式场景），还会发 <code>BlockStored</code> 事件通知其他节点</li>
+</ol>
+
+<div class="callout">
+  <div class="callout-title">hash 是什么时候算的？</div>
+  hash 不是在 block_pool 里算的——是在 <code>Request</code> 对象创建时和 append token 时就算好了（<code>request.block_hashes</code>）。block_pool 只是<b>消费</b>这些已计算好的 hash。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec9">9. _maybe_evict_cached_block：延迟驱逐（Lazy Eviction）</h2>
+
+<pre><code>def _maybe_evict_cached_block(self, block: KVCacheBlock) -> bool:
+    block_hash = block.block_hash
+    if block_hash is None:
+        return False  # 没有 hash，不需要驱逐
+
+    # 从 hash map 中移除
+    if self.cached_block_hash_to_block.pop(
+            block_hash, block.block_id) is None:
+        return False  # hash map 里找不到，不需要驱逐
+
+    block.reset_hash()  # 清除 block 上的 hash 元数据
+    return True</code></pre>
+
+<p><b>调用时机</b>：在 <code>get_new_blocks</code> 中，当一个空闲 block 被重新分配时。</p>
+
+<p><b>完整的 Lazy Eviction 生命周期</b>：</p>
+
+<div class="ascii">block 被请求 A 使用 → block 写满 → hash 注册到 hash map（cache_full_blocks）
+→ 请求 A 结束 → block 释放回空闲链表（free_blocks），但 hash 还在 map 里
+→ 新请求 B 来了，前缀匹配命中 → touch，ref_cnt + 1，从空闲链表移除
+                                      （✓ Lazy Eviction 成功省下一次重算）
+
+或者：
+→ 没人来匹配 → block 一直在空闲链表里
+→ 新请求 C 需要 block → get_new_blocks 取到它
+→ _maybe_evict_cached_block：从 hash map 删除，清 hash
+→ block 被分配给 C，写入全新数据
+                                      （× Lazy Eviction 没省到，但也没浪费）</div>
+
+<div class="good-callout">
+  <div class="callout-title">✓ Lazy Eviction 的设计哲学</div>
+  <b>"释放时保留 hash，分配时才清理"</b>——乐观策略。赌的是：释放后短时间内可能有新请求命中同一前缀。跟 OS page cache 的"释放文件描述符但保留 page cache"是同一个道理。最坏情况不会比"立即清理"更差（只多了一次 hash map pop 操作），最好情况省掉一次完整的 Prefill 重算。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec10">10. null_block：一个特殊的占位 block</h2>
+
+<pre><code># 初始化时取出一个 block 作为 null_block
+self.null_block = self.free_block_queue.popleft()
+self.null_block.is_null = True</code></pre>
+
+<p><b>null_block 是什么？</b> 一个"占位符"block，block_id=0。用于以下场景：</p>
+<ul>
+  <li><b>稀疏 attention</b>（如 Sliding Window Attention）：不是所有层都需要 KV cache，不需要 cache 的位置用 null_block 占位</li>
+  <li><b>Mamba 等非 attention 模型</b>的 prefix caching align mode</li>
+  <li>逻辑上需要一个 block table 条目但物理上不需要存储数据时</li>
+</ul>
+
+<p><b>特殊规则</b>：</p>
+<ul>
+  <li>null_block 的 ref_cnt <b>不维护</b>（代码里有注释：needs special care to avoid freeing it）</li>
+  <li>free_blocks 里过滤掉 <code>is_null</code> 的 block，不放回空闲链表</li>
+  <li>touch 里也跳过 null_block</li>
+  <li>get_usage 里总数减 1 扣掉 null_block</li>
+</ul>
+
+<!-- ===================== -->
+<h2 id="sec11">11. 论文到代码的完整映射</h2>
+
+<table>
+  <thead><tr><th>论文概念（§4.2）</th><th>代码对应</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>Physical KV block</td><td><code>KVCacheBlock</code> 对象</td><td>定义在 kv_cache_utils.py，有 block_id / ref_cnt / block_hash 属性</td></tr>
+    <tr><td>Block pool (全局物理 block 池)</td><td><code>BlockPool.blocks: list[KVCacheBlock]</code></td><td>init 时一次性创建</td></tr>
+    <tr><td>Free block list</td><td><code>BlockPool.free_block_queue: FreeKVCacheBlockQueue</code></td><td>双向链表，支持 O(1) 的 popleft / append / remove</td></tr>
+    <tr><td>Block allocate</td><td><code>BlockPool.get_new_blocks()</code></td><td>从空闲链表左端取</td></tr>
+    <tr><td>Block free</td><td><code>BlockPool.free_blocks()</code></td><td>ref_cnt-1，到 0 归还空闲链表</td></tr>
+    <tr><td>Reference count</td><td><code>KVCacheBlock.ref_cnt</code></td><td>touch +1、free -1、get_new_blocks 分配时设为 1</td></tr>
+    <tr><td>Prefix Cache 索引</td><td><code>BlockPool.cached_block_hash_to_block: BlockHashToBlockMap</code></td><td>hash + group_id → block 的映射</td></tr>
+    <tr><td>Cache hit (Prefix Cache 命中)</td><td><code>BlockPool.get_cached_block() + touch()</code></td><td>查 hash map → 命中 → ref_cnt+1 + 从空闲链表移除</td></tr>
+    <tr><td>Cache register (注册)</td><td><code>BlockPool.cache_full_blocks()</code></td><td>block 写满后算 hash 注册到 map</td></tr>
+    <tr><td>Eviction (驱逐)</td><td><code>BlockPool._maybe_evict_cached_block()</code></td><td>Lazy：释放时不删 hash，重新分配时才清理</td></tr>
+    <tr><td>论文没提到的</td><td><code>null_block</code></td><td>论文没讲，代码里为稀疏 attention 加的占位符</td></tr>
+    <tr><td>论文没提到的</td><td><code>kv_event_queue</code></td><td>分布式 KV Cache 事件通知（V1 新增）</td></tr>
+  </tbody>
+</table>
+
+<!-- ===================== -->
+<h2 id="sec12">12. ⭐ 高频卡点答疑（8 个 Q）</h2>
+
+<div class="qa-callout">
+  <div class="qa-q">Q1：block_pool.py 最核心的三个数据结构是什么？</div>
+  ① <code>blocks</code>（全局物理 block 数组），② <code>free_block_queue</code>（空闲 block 双向链表），③ <code>cached_block_hash_to_block</code>（hash → block 的 Prefix Cache 索引）。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q2：ref_cnt 在哪些方法里加/减？</div>
+  加：<code>get_new_blocks</code>（分配，0→1）、<code>touch</code>（cache 命中，+1）。<br>
+  减：<code>free_blocks</code>（释放，-1，到 0 归还空闲链表）。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q3：为什么释放 block 时不从 hash map 里删除？</div>
+  <b>Lazy Eviction</b>——乐观地赌短时间内有新请求命中同一前缀。释放后 hash 留在 map 里，直到 block 被重新分配时才清理（<code>_maybe_evict_cached_block</code>）。最坏情况不比立即清理差，最好情况省下一次 Prefill 重算。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q4：CoW 在 block_pool.py 里有体现吗？</div>
+  block_pool 本身不直接做 CoW——它只提供基础能力（ref_cnt、get_new_blocks、free_blocks）。CoW 的触发判断和"复制老 block 内容到新 block"的逻辑在上层 <code>kv_cache_manager.py</code> 和 GPU 侧的 fused block copy kernel 里。block_pool 的 ref_cnt 机制是 CoW 能工作的<b>前提条件</b>。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q5：free_block_queue 是双向链表，为什么不用简单的 list？</div>
+  因为 <code>touch</code> 需要 <b>O(1) 地从链表中间移除一个 block</b>——当 Prefix Cache 命中时，命中的 block 可能在空闲链表的任意位置。Python list 的 remove 是 O(n)，双向链表是 O(1)。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q6：free_blocks 的 prepend 参数什么时候用？</div>
+  被抢占（preempt）请求的 block 释放时用 prepend=True——这些 block 被放到空闲链表<b>前端</b>，意味着<b>优先被重新分配</b>。因为被抢占请求的 KV Cache 不太可能再被复用（请求已经中断了），优先回收它们比回收还有 Prefix Cache 价值的 block 更合理。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q7：null_block 为什么需要？论文里有吗？</div>
+  论文里没有。null_block 是代码实现中为<b>稀疏 attention</b>（如 Sliding Window Attention）和<b>非 attention 模型</b>（如 Mamba）加的占位符——逻辑上需要一个 block table 条目但物理上不需要存储数据的位置，用 null_block 填充。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q8：kv_event_queue 是干什么的？</div>
+  分布式 KV Cache 场景下的<b>事件通知机制</b>。当 block 被缓存（BlockStored）、驱逐（BlockRemoved）或全部清除（AllBlocksCleared）时，产生事件放入队列，由上层消费并通知其他节点。这是 vLLM V1 新增的分布式特性，论文里没有。
+</div>
+
+<!-- ===================== -->
+<h2 id="sec13">13. 参考资料</h2>
+
+<ul>
+  <li>源码文件：<code>vllm/v1/core/block_pool.py</code>（<a href="https://github.com/vllm-project/vllm/blob/main/vllm/v1/core/block_pool.py" target="_blank">GitHub 链接</a>）</li>
+  <li>依赖文件：<code>vllm/v1/core/kv_cache_utils.py</code>（KVCacheBlock / FreeKVCacheBlockQueue 定义）</li>
+  <li>上一篇博客：<a href="07-paged-attention-paper.html">07 · PagedAttention 论文精读</a></li>
+  <li>下一篇预告：<b>博客 09 · vLLM 源码精读：kv_cache_manager.py</b>（block_pool 的上层调用者）</li>
+</ul>
+
+<hr>
+
+<p style="color: var(--muted); font-size: 13.5px;">
+  这是 <b>Stage 1 / Week 2</b> 的第二篇，对应 AI Infra 转型学习计划"读 vLLM 源码"任务。
+</p>
+
+</body>
+</html>
