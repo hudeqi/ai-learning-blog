@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>vLLM 源码精读：调度器 —— Continuous Batching 与抢占的完整实现 — 学习笔记</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  :root {--bg:#fbfaf7;--fg:#1f2328;--muted:#57606a;--accent:#0969da;--accent2:#8250df;--code-bg:#f6f8fa;--code-fg:#24292f;--border:#d0d7de;--callout-bg:#fff8c5;--callout-border:#d4a72c;--infra-bg:#ddf4ff;--infra-border:#54aeff;--good-bg:#dafbe1;--good-border:#4ac26b;--qa-bg:#fbefff;--qa-border:#a371f7;--warn-bg:#ffebe9;--warn-border:#cf222e;}
+  *{box-sizing:border-box}html{scroll-behavior:smooth}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--fg);line-height:1.78;max-width:900px;margin:0 auto;padding:44px 28px 96px;font-size:16px}
+  h1{font-size:30px;border-bottom:2px solid var(--border);padding-bottom:14px;margin-bottom:6px;line-height:1.35}
+  .subtitle{color:var(--muted);font-size:14px;margin-bottom:8px}
+  .meta{color:var(--muted);font-size:13px;margin-bottom:36px}
+  h2{font-size:23px;margin-top:52px;border-left:4px solid var(--accent);padding-left:12px}
+  h3{font-size:18px;margin-top:30px;color:var(--accent2)}
+  p{margin:14px 0}
+  code{background:var(--code-bg);padding:2px 6px;border-radius:4px;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:14px;color:#cf222e}
+  pre{background:var(--code-bg);color:var(--code-fg);border:1px solid var(--border);border-radius:8px;padding:16px 18px;overflow-x:auto;font-size:13.5px;line-height:1.6}
+  pre code{background:transparent;padding:0;color:inherit;font-size:13.5px}
+  a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+  blockquote{border-left:4px solid var(--border);color:var(--muted);padding:4px 14px;margin:18px 0;background:#fff}
+  .callout{background:var(--callout-bg);border-left:4px solid var(--callout-border);padding:12px 16px;margin:18px 0;border-radius:4px}
+  .callout-title{font-weight:600;margin-bottom:4px}
+  .good-callout{background:var(--good-bg);border-left:4px solid var(--good-border);padding:12px 16px;margin:18px 0;border-radius:4px}
+  .warn-callout{background:var(--warn-bg);border-left:4px solid var(--warn-border);padding:12px 16px;margin:18px 0;border-radius:4px}
+  .qa-callout{background:var(--qa-bg);border-left:4px solid var(--qa-border);padding:14px 18px;margin:22px 0;border-radius:4px}
+  .qa-callout .qa-q{font-weight:600;color:#6f42c1;margin-bottom:8px}
+  table{border-collapse:collapse;width:100%;margin:18px 0;font-size:14.5px}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;vertical-align:top}
+  th{background:#f6f8fa;font-weight:600}
+  ul,ol{padding-left:28px}li{margin:6px 0}
+  .toc{background:#fff;border:1px solid var(--border);border-radius:8px;padding:16px 22px;margin:28px 0;font-size:14.5px}
+  .toc-title{font-weight:600;margin-bottom:6px;color:var(--muted);font-size:13px;letter-spacing:.5px}
+  .toc ol{padding-left:22px;margin:6px 0}
+  .tag{display:inline-block;background:#f6f8fa;border:1px solid var(--border);border-radius:12px;padding:1px 10px;font-size:12px;color:var(--muted);margin-right:6px}
+  hr{border:none;border-top:1px solid var(--border);margin:40px 0}
+  .ascii{font-family:monospace;white-space:pre;background:#fff;border:1px dashed var(--border);padding:14px;border-radius:6px;font-size:13px;line-height:1.5;overflow-x:auto}
+</style>
+</head>
+<body>
+
+<h1>vLLM 源码精读：调度器 —— Continuous Batching 与抢占</h1>
+<div class="subtitle">— schedule() 完整循环 + RUNNING/WAITING/Preemption + update_from_output</div>
+<div class="meta">
+  <span class="tag">源码精读</span>
+  <span class="tag">AI Infra</span>
+  <span class="tag">vLLM V1</span>
+  <span class="tag">Scheduler</span>
+  <span class="tag">Continuous Batching</span>
+  <span class="tag">Stage 1 / Week 3</span>
+</div>
+
+<div class="toc">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#sec1">1. 调度器的位置与职责</a></li>
+    <li><a href="#sec2">2. schedule() 主循环六步全景</a></li>
+    <li><a href="#sec3">3. Step 1-2：收尾 + 算剩余资源</a></li>
+    <li><a href="#sec4">4. Step 3：调度 RUNNING 请求</a></li>
+    <li><a href="#sec5">5. Step 4-5：调度 WAITING 请求</a></li>
+    <li><a href="#sec6">6. 抢占：_preempt_request</a></li>
+    <li><a href="#sec7">7. Step 6：打包 SchedulerOutput</a></li>
+    <li><a href="#sec8">8. update_from_output：下一轮前的收尾</a></li>
+    <li><a href="#sec9">9. 论文映射 + 关键文件索引</a></li>
+    <li><a href="#sec10">10. ⭐ 高频卡点答疑</a></li>
+  </ol>
+</div>
+
+<h2 id="sec1">1. 调度器的位置与职责</h2>
+
+<p>Scheduler（<code>scheduler.py</code>，113KB）是 vLLM V1 的中枢。一句话职责：</p>
+
+<div class="good-callout">
+  <div class="callout-title">每生成一个 token，决定下一轮 GPU 帮谁干活、帮几个、资源不够时抢谁。</div>
+</div>
+
+<p>它持有的核心状态：</p>
+<table>
+  <thead><tr><th>状态</th><th>类型</th><th>含义</th></tr></thead>
+  <tbody>
+    <tr><td><code>self.running</code></td><td><code>list[Request]</code></td><td>正在执行的请求列表</td></tr>
+    <tr><td><code>self.waiting</code></td><td><code>RequestQueue</code></td><td>等待调度的请求队列（FCFS 或 PRIORITY）</td></tr>
+    <tr><td><code>self.skipped_waiting</code></td><td><code>RequestQueue</code></td><td>因异步依赖/约束被跳过的请求</td></tr>
+    <tr><td><code>self.kv_cache_manager</code></td><td><code>KVCacheManager</code></td><td>KV Cache 门面（博客 09 讲过的）</td></tr>
+    <tr><td><code>self.max_num_scheduled_tokens</code></td><td><code>int</code></td><td>每轮 token_budget 上限（由 scheduler_config 配置）</td></tr>
+  </tbody>
+</table>
+
+<h2 id="sec2">2. schedule() 主循环六步全景</h2>
+
+<p><code>schedule()</code>（行 351 ~ 970，约 620 行）每轮被 Engine 调用一次。六步流程：</p>
+
+<div class="ascii">1. 收尾    上一轮完成的请求 → free block
+2. 算账    剩余 free block - decode 预留 = 可用 block
+3. RUNNING  已在跑的请求继续执行（优先保障）
+4. WAITING  从等待队列拉新请求（用剩余资源）
+5. 抢占    资源不够 → 抢占最后的请求回收 block → 重试 WAITING
+6. 打包    组装 SchedulerOutput → 发给 Worker 执行</div>
+
+<div class="callout">
+  <div class="callout-title">调度顺序的设计哲学</div>
+  <b>RUNNING 优先 → WAITING 用剩余</b>。已跑起来的请求不容打断，新请求只能用余粮。
+</div>
+
+<h2 id="sec3">3. Step 1-2：收尾 + 算剩余资源</h2>
+
+<h3>Step 1 并不在 schedule() 内部</h3>
+<p>schedule() 开头调 <code>kv_cache_manager.new_step_starts()</code> 重置计数器，但真正"收尾"发生在上轮 Worker 返回后、Engine 调 <code>update_from_output()</code> 时（见 §8）。Scheduler 上轮结束后，已完成请求的 block 已被释放。</p>
+
+<h3>Step 2：token_budget</h3>
+<pre><code>token_budget = self.max_num_scheduled_tokens
+# 如果调度器 paused，token_budget = 0（任何请求都不调度）</code></pre>
+
+<p>token_budget 约束本轮能处理的总 token 数。RUNNING 和 WAITING 共享这个预算，消耗完即止。</p>
+
+<p>另外，block 资源约束是隐式的：当 <code>kv_cache_manager.allocate_slots()</code> 返回 None 时，表示 block 不够。</p>
+
+<h2 id="sec4">4. Step 3：调度 RUNNING 请求</h2>
+
+<p>遍历 <code>self.running</code> 列表，逐个尝试加入本轮 batch：</p>
+
+<pre><code>while req_index < len(self.running) and token_budget > 0:
+    request = self.running[req_index]
+
+    # ---- 跳过条件 ----
+    if 已达 max_tokens 且没 spec tokens 可验证: continue
+    if 未到 next_decode_eligible_step（V2+PP+async）: continue
+    if num_new_tokens == 0（PP 未完成/达上限/encoder budget 耗尽）: continue
+
+    # ---- 确定本步 token 数 ----
+    num_new_tokens = 请求剩余待处理 token 数
+    if long_prefill_token_threshold 生效: 截断到这个阈值
+    num_new_tokens = min(num_new_tokens, token_budget)
+    num_new_tokens = min(num_new_tokens, max_model_len - 1 - 已计算 token 数)
+
+    # ---- 分配 block ----
+    while True:
+        new_blocks = kv_cache_manager.allocate_slots(request, num_new_tokens)
+        if new_blocks is not None:
+            break  # 分配成功
+        # 分配失败 → 抢占
+        preempted_req = self.running.pop()  # 默认抢最后一个
+        或 max(running, key=priority)       # PRIORITY 策略
+        self._preempt_request(preempted_req)
+        preempted_reqs.append(preempted_req)
+
+    # ---- 加入本轮 ----
+    scheduled_running_reqs.append(request)
+    token_budget -= num_new_tokens
+    req_index += 1</code></pre>
+
+<div class="warn-callout">
+  <div class="callout-title">跳过条件备忘</div>
+  <code>num_new_tokens == 0</code> 时不 break 而是 <code>continue</code>——代码注释说这是有意放宽 FCFS，允许后面的请求先调度。
+</div>
+
+<h2 id="sec5">5. Step 4-5：调度 WAITING 请求</h2>
+
+<p>RUNNING 调度完成后，用剩余 token_budget 从等待队列拉新请求：</p>
+
+<pre><code>while (self.waiting or self.skipped_waiting) and token_budget > 0:
+    request_queue = self._select_waiting_queue_for_scheduling()
+    request = request_queue.peek()
+
+    # ---- 跳过条件 ----
+    if 已停等（lora 约束 / kv connector 传输中等）: 跳过 / 放回
+    if 超过 max_loras 限制: break  # 整个队列停止
+
+    # ---- 分配 block（同 RUNNING 流程） ----
+    new_blocks = kv_cache_manager.allocate_slots(request, num_new_tokens)
+    if new_blocks is None:
+        if 已经有过抢占: break  # 不能再抢了
+        抢占最后一个 running 请求
+        continue  # 重试
+
+    # ---- 加入本轮 ----
+    scheduled_new_reqs.append(request)
+    token_budget -= num_new_tokens</code></pre>
+
+<div class="callout">
+  <div class="callout-title">WAITING 段的独特之处</div>
+  和 RUNNING 不同，WAITING 是<b>有上限的循环</b>——如果已经触发过一次抢占还是不够，就停止拉新。因为继续抢占下去会导致整个系统不稳定。
+</div>
+
+<h2 id="sec6">6. 抢占：_preempt_request</h2>
+
+<p>仅 23 行（行 995-1017）：</p>
+
+<pre><code>def _preempt_request(self, request, timestamp):
+    # 1. 释放该请求的所有 KV block
+    self.kv_cache_manager.free(request.request_id)
+    # 键：释放后 block 回到 free_block_queue，hash 保留（Lazy Eviction）
+
+    # 2. 重置请求状态
+    request.status = waiting 状态
+    # 重新 put 到 waiting 队列头部 → 等有资源后优先恢复
+</code></pre>
+
+<p><b>V1 代码里不区分 Swap 和 Recomputation</b>——抢占 = 释放 block + 重新入队。论文描述的两种策略在 V1 被统一为"释放重排"——block 回到 free_queue 时 hash 还留着，如果短时间内恢复且命中 Prefix Cache 就是"免费召回"；如果 block 被新请求占用则等价于 recomputation。</p>
+
+<div class="good-callout">
+  <div class="callout-title">抢占的"最小化伤害"</div>
+  抢的是 running 列表中<b>最后面的</b>（默认方案）或<b>最低优先级的</b>（PRIORITY 方案）。保证先到的请求不被后来者挤掉。
+</div>
+
+<h2 id="sec7">7. Step 6：打包 SchedulerOutput</h2>
+
+<p>schedule() 末尾把本轮决策组装成 <code>SchedulerOutput</code>（定义在 <code>interface.py</code>）：</p>
+
+<table>
+  <thead><tr><th>字段</th><th>类型</th><th>Worker 用来做什么</th></tr></thead>
+  <tbody>
+    <tr><td><code>scheduled_new_reqs</code></td><td>list[Request]</td><td>本轮新加入的 Prefill 请求</td></tr>
+    <tr><td><code>scheduled_resumed_reqs</code></td><td>list[Request]</td><td>之前被抢占、本轮恢复的请求</td></tr>
+    <tr><td><code>scheduled_running_reqs</code></td><td>list[Request]</td><td>本轮继续执行的 Decode 请求</td></tr>
+    <tr><td><code>preempted_reqs</code></td><td>list[Request]</td><td>被抢占的请求</td></tr>
+    <tr><td><code>num_scheduled_tokens</code></td><td>dict[str, int]</td><td>每个请求本轮要处理的 token 数</td></tr>
+    <tr><td><code>req_to_new_blocks</code></td><td>dict[str, KVCacheBlocks]</td><td>每个请求新分配的 KV block</td></tr>
+    <tr><td><code>finished_req_ids</code></td><td>set[str]</td><td>已确认完成（供 Worker 跳过）</td></tr>
+    <tr><td><code>scheduled_spec_decode_tokens</code></td><td>dict[str, list[int]]</td><td>投机解码的 draft token</td></tr>
+  </tbody>
+</table>
+
+<h2 id="sec8">8. update_from_output：下一轮前的收尾</h2>
+
+<p><code>update_from_output()</code>（行 1350 ~ 1673，约 320 行）在 Worker 完成后被 Engine 调用。核心逻辑：</p>
+
+<pre><code>def update_from_output(self, scheduler_output, model_runner_output):
+    for req_id, output in model_runner_output.items():
+        request = self.requests[req_id]
+
+        # 1. 更新请求状态
+        request.num_computed_tokens += output.num_tokens
+        追加 output.new_token_ids
+
+        # 2. 处理完成
+        if 生成了 EOS 或 stop_string 或达到 max_tokens:
+            self._free_request(request)   # 释放所有 block
+            running 列表移除
+
+        # 3. 处理抢占后的恢复
+        如果之前被抢占的请求恢复 → scheduled_resumed_reqs
+
+        # 4. 更新 running 列表
+        self._update_after_schedule(scheduler_output)</code></pre>
+
+<p><b>核心操作</b>：<code>_free_request</code> → <code>kv_cache_manager.free(request_id)</code> → block_pool.free_blocks → ref_cnt - 1 → 到 0 归还。</p>
+
+<h2 id="sec9">9. 论文映射 + 关键文件索引</h2>
+
+<table>
+  <thead><tr><th>论文概念</th><th>代码对应文件</th><th>对应行</th></tr></thead>
+  <tbody>
+    <tr><td>Iteration-level scheduling</td><td>scheduler.py</td><td>schedule() ~351</td></tr>
+    <tr><td>Continuous Batching</td><td>scheduler.py</td><td>RUNNING + WAITING 混排 ~387-780</td></tr>
+    <tr><td>FCFS scheduling</td><td>scheduler.py</td><td>FCFS 为默认策略 + _select_waiting_queue_for_scheduling</td></tr>
+    <tr><td>Preemption（抢占）</td><td>scheduler.py</td><td>_preempt_request ~995</td></tr>
+    <tr><td>SchedulerOutput</td><td>interface.py + output.py</td><td>共 19KB</td></tr>
+    <tr><td>请求队列</td><td>request_queue.py</td><td>RequestQueue / FCFSQueue</td></tr>
+    <tr><td>论文没提的</td><td colspan="2">token_budget / long_prefill_threshold / PRIORITY 策略 / async PP 约束</td></tr>
+  </tbody>
+</table>
+
+<h2 id="sec10">10. ⭐ 高频卡点答疑</h2>
+
+<div class="qa-callout">
+  <div class="qa-q">Q1：为什么先调度 RUNNING 再调度 WAITING？</div>
+  已跑起来的请求优先保障，新请求只能用剩余资源。反过来会导致新请求挤占正在运行的请求造成不稳定。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q2：RUNNING 请求什么情况下会被跳过？</div>
+  ① 已达 max_tokens；② 未到 next_decode_eligible_step（V2+PP+async）；③ num_new_tokens==0（PP 未完/达上限/encoder budget 耗尽）。跳过时用 continue 而非 break，允许后面的请求先调度。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q3：抢占选谁？</div>
+  默认（FCFS）：<code>running.pop()</code>——抢最后进入 running 列表的；PRIORITY：<code>max(running, key=priority, arrival_time)</code>——抢最低优先级且最晚到的。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q4：_preempt_request 到底做了什么？</div>
+  ① <code>kv_cache_manager.free()</code> 释放 block；② 请求放回 waiting 队列。V1 不区分 Swap/Recompute——统一为释放重入队。block 的 hash 保留实现免费召回（命中 Prefix Cache 时无需重算）。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q5：update_from_output 的核心操作？</div>
+  ① 更新 num_computed_tokens 和 token_ids；② 完成的请求调 _free_request 释放 block → 移出 running；③ _update_after_schedule 同步 running 列表状态。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q6：token_budget 是什么？</div>
+  本轮 batch 能处理的最大 token 数。RUNNING 和 WAITING 共享此预算，消耗完即停止拉新。由 <code>max_num_scheduled_tokens</code> 配置。
+</div>
+
+<div class="qa-callout">
+  <div class="qa-q">Q7：SchedulerOutput 的关键字段？</div>
+  <code>scheduled_new_reqs / scheduled_running_reqs / scheduled_resumed_reqs</code>（三类请求）、<code>preempted_reqs</code>（被抢的）、<code>num_scheduled_tokens</code>（每请求 token 数）、<code>req_to_new_blocks</code>（新 KV block）、<code>finished_req_ids</code>（已完成的）。
+</div>
+
+<hr>
+<p style="color:var(--muted);font-size:13.5px">这是 Stage 1 / Week 3 的内容，对应 AI Infra 转型学习计划中"vLLM 调度器"任务。<br>
+  上一篇：<a href="09-vllm-kv-cache-manager.html">09 · KV Cache 管理层</a> | 下一篇预告：worker/ 和 attention/ 模块。</p>
+</body>
+</html>
